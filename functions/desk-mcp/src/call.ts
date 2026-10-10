@@ -15,7 +15,7 @@ export class CallSession extends StatefulActor {
     const s = await this.get();
     await this.ctx.storage.put("s", { ...s, caller, booking: booking || s.booking, at: Date.now() });
   }
-  /** Called by lookup_booking once an unrecognised caller proves the booking. */
+  /** Called by verify_booking once an unrecognised caller proves the booking. */
   async bind(booking: string): Promise<void> {
     const s = await this.get();
     await this.ctx.storage.put("s", { ...s, booking });

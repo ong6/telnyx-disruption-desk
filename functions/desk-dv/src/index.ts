@@ -48,7 +48,10 @@ export default {
     const callId: string = p.call_control_id ?? p.telnyx_conversation_id ?? body?.data?.id ?? `${Date.now()}`;
     // Telnyx's W3C trace id is our trace id: its MCP client sends the same one, so the webhook,
     // the MCP tool calls and everything they touch land in one trace.
-    const trace = traceFrom(req.headers.get("traceparent"), `c${createHash("sha1").update(callId).digest("hex").slice(0, 12)}`);
+    // Later webhook calls in the same conversation echo earlier variables: keep the first trace id.
+    const trace = /^[0-9a-f]{32}$|^c[0-9a-f]{12}$/.test(p.trace_id ?? "")
+      ? p.trace_id
+      : traceFrom(req.headers.get("traceparent"), `c${createHash("sha1").update(callId).digest("hex").slice(0, 12)}`);
     const signed = signatureValid(req, raw);
 
     try {

@@ -24,13 +24,14 @@ export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId })
     speak("n_incident", "Incident notice", "{{incident_notice}}"),
     prompt("n_triage", "Greet & identify need", [
       "Open the conversation and find out what the caller needs.",
-      "If caller_known is true: greet {{first_name}} by name. If callback_reason is seat_available, say you're calling back because a seat opened up and it is held for them, and offer to confirm it. Otherwise, if their flight is cancelled or delayed, say so plainly in one sentence and offer to move them to another flight. If they already have a seat on hold, say so and offer to confirm it. If they were already rebooked, give the confirmation code ({{rebooked_confirmation}}).",
+      "Keep this first turn to two short sentences and one question. Don't repeat the incident notice; the caller just heard it.",
+      "If caller_known is true: greet {{first_name}} by name. If callback_reason is seat_available, say you're calling back because a seat opened up and it is held for them, and offer to confirm it. Otherwise, if their flight is cancelled or delayed, say so in one sentence and ask whether they'd like a new flight. If they already have a seat on hold, say so and offer to confirm it. If they were already rebooked, give the confirmation code ({{rebooked_confirmation}}).",
       "If caller_known is false: ask how you can help. You'll verify their booking later if it's needed.",
       "Needs: change or rebook a flight, a refund, flight status or a policy question, or a person.",
     ].join("\n")),
     prompt("n_rebook", "Rebook", [
       "Move the caller to another flight.",
-      "1. If caller_known is false and you haven't verified them yet, ask for the 6-character booking code (read it back letter by letter) and last name, then call lookup_booking.",
+      "1. If caller_known is false and you haven't verified them yet, ask for the 6-character booking code (read it back letter by letter) and last name, then call verify_booking. If it returns attempts_left 0, tell the caller you're connecting them with a colleague.",
       "2. Call find_alternatives. Offer at most two options, earliest first, with day and departure time. Mention seats are limited.",
       "3. When they choose, call hold_seats with that flight_id. If the hold fails because the flight just filled, say so and offer the next option.",
       "4. Once held, read back the flight, date, time and number of passengers, and ask for a clear yes.",
@@ -42,7 +43,7 @@ export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId })
     ].join("\n")),
     speak("n_refund_rights", "Refund rights (verbatim)", "Because Nimbus Air cancelled your flight, you're entitled to a full refund of your ticket, including taxes and fees, to your original form of payment within seven business days. You can also move to another Nimbus Air flight within seven days at no cost."),
     prompt("n_refund", "Refund", [
-      "If caller_known is false and you haven't verified them yet, verify with lookup_booking first.",
+      "If caller_known is false and you haven't verified them yet, verify with verify_booking first.",
       "Check they want the refund rather than a free change. Then call request_refund.",
       "If it succeeds, give the refund reference using the spelled version and the timeline. If they aren't eligible, explain why in one sentence and offer to change the flight instead.",
     ].join("\n")),
@@ -51,7 +52,7 @@ export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId })
       "Call join_waitlist with that flight_id. If a voucher is issued, give the code using the spelled version and say what it covers.",
     ].join("\n")),
     prompt("n_faq", "Status & policy", [
-      "Answer questions about the caller's flight with get_trip_status (verify unknown callers first with lookup_booking), and policy questions only from get_policy.",
+      "Answer questions about the caller's flight with get_trip_status (verify unknown callers first with verify_booking), and policy questions only from get_policy.",
       "Keep answers to two or three sentences.",
     ].join("\n")),
     prompt("n_handoff_gate", "Human handoff gate", "Routing step: say nothing here."),
@@ -68,11 +69,11 @@ export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId })
   const scope = {
     n_route: [],
     n_triage: [],
-    n_rebook: ["lookup_booking", "find_alternatives", "hold_seats"],
+    n_rebook: ["verify_booking", "find_alternatives", "hold_seats"],
     n_confirm: ["confirm_rebooking"],
-    n_refund: ["lookup_booking", "request_refund"],
+    n_refund: ["verify_booking", "request_refund"],
     n_waitlist: ["find_alternatives", "join_waitlist"],
-    n_faq: ["lookup_booking", "get_trip_status", "get_policy"],
+    n_faq: ["verify_booking", "get_trip_status", "get_policy"],
     n_handoff_gate: [],
     n_callback: ["request_callback"],
     n_wrap: [],
@@ -111,11 +112,16 @@ export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId })
   edge("n_faq", "n_wrap", llm("The caller's question is answered and they need nothing else."));
   edge("n_callback", "n_wrap", llm("The callback is booked, or the caller declined it."));
 
+  // Three failed verifications: verify_booking stores attempts_left as a variable, so this is a
+  // deterministic variable comparison, not something the model has to notice.
+  const lockedOut = { type: "bool_op", op: "or", operands: [cmp("==", v("verify_attempts_left"), n(0)), cmp("==", v("verify_attempts_left"), s("0"))] };
+  for (const node of ["n_rebook", "n_refund", "n_faq"]) edges.unshift({ id: `e0_${node}_locked`, start_node_id: node, target: { type: "node", node_id: "n_handoff_gate" }, condition: expr(lockedOut) });
+
   // Every conversational node can reach a person: on request, after 3 failed verifications, or
   // after 5 minutes. The confirm step is exempt from the timer so a booking is never cut off.
   for (const node of ["n_triage", "n_rebook", "n_confirm", "n_refund", "n_waitlist", "n_faq", "n_wrap"]) {
     if (node !== "n_confirm") edge(node, "n_handoff_gate", expr(cmp(">=", v("telnyx_conversation_duration_secs"), n(300))));
-    edge(node, "n_handoff_gate", llm("The caller asks for a person, an agent or a supervisor, is very upset, or lookup_booking says attempts_left is 0."));
+    edge(node, "n_handoff_gate", llm("The caller asks for a person, an agent or a supervisor, or is very upset, or you told the caller you're connecting them with a colleague."));
   }
   // The gate decides deterministically: transfer if the desk can take it, otherwise a callback.
   edge("n_handoff_gate", "n_callback", expr(cmp("==", v("human_queue"), s("full"))));

@@ -1,8 +1,8 @@
-// The MCP tools. Every tool acts on the booking this call is verified for (from the per-call
-// token, or bound by lookup_booking): the model never chooses whose booking to change. Rules
+// The MCP tools. Every tool acts on the booking this call is verified for (bound by the webhook
+// from caller ID, or by verify_booking): the model never chooses whose booking to change. Rules
 // live here, not in the prompt: no confirm without a live hold, no refund unless the flight was
 // disrupted.
-import { readConfig } from "../../../shared/config";
+import { readConfigFast } from "../../../shared/config";
 import { pss, type PssBooking } from "../../../shared/pss-client";
 import { rankOptions } from "../../../shared/rank";
 import type { CallClaims, FlightSnapshot, TripState } from "../../../shared/types";
@@ -24,7 +24,7 @@ const MAX_VERIFY_ATTEMPTS = 3;
 
 const session = (ctx: ToolCtx) => ctx.env.CALL.idFromName(ctx.claims.trace);
 
-/** The booking this call may act on: bound by the webhook (caller ID) or by lookup_booking. */
+/** The booking this call may act on: bound by the webhook (caller ID) or by verify_booking. */
 async function sessionBooking(ctx: ToolCtx): Promise<string> {
   if (ctx.claims.booking) return ctx.claims.booking;
   const s = await session(ctx).get();
@@ -34,7 +34,7 @@ async function sessionBooking(ctx: ToolCtx): Promise<string> {
 
 async function requireBooking(ctx: ToolCtx): Promise<PssBooking> {
   const code = await sessionBooking(ctx);
-  if (!code) throw new ToolError("not_verified", "Verify the caller first with lookup_booking (booking code and last name).");
+  if (!code) throw new ToolError("not_verified", "Verify the caller first with verify_booking (booking code and last name).");
   const b = await pss(ctx.env, ctx.claims.trace, ctx.log).booking(code);
   if (!b) throw new ToolError("booking_missing", "The booking could not be found in the reservation system.");
   return b;
@@ -74,7 +74,7 @@ async function caseSummary(ctx: ToolCtx, b: PssBooking) {
 }
 
 export const TOOLS: Record<string, Tool> = {
-  lookup_booking: {
+  verify_booking: {
     description:
       "Verify an unrecognised caller. Ask for their 6-character booking code (read it back letter by letter) and last name, then call this. On success the call is linked to that booking.",
     inputSchema: {
@@ -140,10 +140,11 @@ export const TOOLS: Record<string, Tool> = {
     inputSchema: { type: "object", properties: { flight_id: { type: "string", description: "e.g. NB862-2026-10-12" } }, required: ["flight_id"] },
     async run(ctx, { flight_id }) {
       const b = await requireBooking(ctx);
-      const { flags } = await readConfig(ctx.env);
+      // Never wait on a KV read mid-conversation: last known flags, refreshed in the background.
+      const ttl = (await readConfigFast(ctx.env, 300))?.flags.hold_ttl_secs ?? 600;
       const t: TripState | null = await trip(ctx, b.code).get();
       if (t?.hold && t.hold.flightId !== flight_id) await flight(ctx, t.hold.flightId).release(t.hold.holdId);
-      const r = await flight(ctx, flight_id).hold(b.code, b.pax, flags.hold_ttl_secs);
+      const r = await flight(ctx, flight_id).hold(b.code, b.pax, ttl);
       if (!r.ok) {
         return { held: false, reason: r.reason, seats_left: r.seatsLeft, next: "say that flight just filled up, then offer the next option from find_alternatives" };
       }

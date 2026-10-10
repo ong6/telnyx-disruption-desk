@@ -33,6 +33,7 @@ export default {
   async fetch(req: Request, env: any): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/health" || url.pathname.startsWith("/health/")) return new Response("ok");
+    if (url.pathname.startsWith("/tools/")) return webhookTool(req, env, url.pathname.slice(7));
     if (url.pathname !== "/mcp" && url.pathname !== "/") return new Response("not found", { status: 404 });
     if (req.method !== "POST") return new Response("method not allowed", { status: 405, headers: { allow: "POST" } });
     const log = makeLogger("mcp", env);
@@ -78,6 +79,31 @@ export default {
     }
   },
 };
+
+/**
+ * The same tools over plain HTTP, for Telnyx webhook tools. verify_booking is one, because a
+ * webhook tool can store fields of its result as variables (attempts_left), which a workflow
+ * expression edge then routes on deterministically. The trace id arrives as x-trace-id
+ * ({{trace_id}}) since webhook tools don't carry the MCP session's traceparent.
+ */
+async function webhookTool(req: Request, env: any, name: string): Promise<Response> {
+  const log = makeLogger("mcp", env);
+  const bearer = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  if (!bearer || (bearer !== process.env.DESK_MCP_BEARER && bearer !== process.env.DESK_ADMIN_TOKEN)) return Response.json({ error: "unauthorized" }, { status: 401 });
+  const tool = TOOLS[name];
+  if (!tool || req.method !== "POST") return Response.json({ error: "no such tool" }, { status: 404 });
+  const claims: CallClaims = { trace: req.headers.get("x-trace-id") || traceFrom(req.headers.get("traceparent"), `wh-${Date.now()}`), caller: "", booking: "" };
+  const args = await req.json().catch(() => ({}));
+  const t0 = Date.now();
+  try {
+    const out = await tool.run({ env, claims, log }, args);
+    log.span({ trace: claims.trace, op: `tool:${name}`, outcome: (out as any).verified === false ? "declined" : "ok", ms: Date.now() - t0, detail: "webhook" });
+    return Response.json(out);
+  } catch (e: any) {
+    log.span({ trace: claims.trace, op: `tool:${name}`, outcome: e instanceof ToolError ? e.code : "error", ms: Date.now() - t0, detail: String(e?.message ?? e).slice(0, 200) });
+    return Response.json({ error: e instanceof ToolError ? e.code : "backend_error" }, { status: e instanceof ToolError ? 400 : 500 });
+  }
+}
 
 function outcomeFor(tool: string, out: any): string | undefined {
   if (tool === "confirm_rebooking" && out.confirmed) return "rebooked";

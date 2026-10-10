@@ -33,6 +33,8 @@ The demo caller's own number is recognised by caller ID and greeted by name.
 
 ## Architecture
 
+![Architecture](docs/architecture.svg)
+
 ```
                    ┌──────────────────────────── Telnyx AI Assistant: Disruption Desk ───────────────────────────┐
  Caller ──PSTN──▶  │ disclosure ─▶ route ─▶ incident notice ─▶ triage ─▶ rebook ─▶ confirm ─▶ wrap up              │
@@ -118,6 +120,23 @@ flights a tool returned"), so those rules hold everywhere.
 **Tool scoping.** Nodes take only shared tools by ID; MCP tools can't be listed per node. So nodes
 that change bookings inherit the MCP tools, nodes that must not act get none, and the MCP server
 enforces the rules itself.
+
+## Proof: 300 callers, 60 seats
+
+`node scripts/stampede.mjs 300 60` sends 300 concurrent seat holds at a 60-seat flight, once
+through the `Flight` actor and once through a naive KV read-modify-write
+([raw output](docs/evidence/stampede-2026-10-10-15-45.txt)):
+
+| Path | Seats granted | Store says held | Oversold |
+|---|---|---|---|
+| Actor `Flight.hold()` | 60 | 60 | 0 |
+| KV read, check, write | 300 | 1 | 240 |
+
+KV told every caller they had a seat and recorded one: last write wins. The actor serialises the
+300 requests (about 28 ms each), so no lock is needed.
+
+This proves backend contention, not 300 live phone calls. Call concurrency is the platform's job,
+and the trial account caps outbound calls at 2.
 
 ## How it meets the brief
 

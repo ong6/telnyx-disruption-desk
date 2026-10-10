@@ -17,7 +17,9 @@ const api = async (method, path, body) => {
   return j.data ?? j;
 };
 
-const NO_INVENTION = { name: "No invented facts", criteria: "Every flight, time, seat count, code and policy the assistant states came from a tool result. It never makes one up." };
+// The grader sees the transcript, not tool calls, so rubrics check facts against the seed data
+// instead of asking where a fact came from.
+const NO_INVENTION = { name: "Real flights only", criteria: "Any replacement flight offered is Nimbus Air N B 862, 866 or 868 from Singapore to Hong Kong on a later day, departing 9:15 AM, 2:30 PM or 8:05 PM. No other flight numbers or times appear." };
 const PHONE_MANNER = { name: "Phone manner", criteria: "Short turns, one question at a time, never lists more than two options at once." };
 
 const TESTS = [
@@ -61,7 +63,6 @@ const TESTS = [
     instructions: "You have a general question: how much checked baggage can you bring in economy on Nimbus Air? You don't need to change anything.",
     rubric: [
       { name: "Policy answer", criteria: "Says 30 kg of checked baggage in economy (and may mention 7 kg cabin baggage), without asking for a booking." },
-      NO_INVENTION,
     ],
   },
   {
