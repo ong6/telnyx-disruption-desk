@@ -9,8 +9,8 @@ This build was made with two AI coding tools, and the line between them is state
 - **OpenCode on Telnyx-hosted models**, through the `@telnyx/opencode` plugin, did self-contained
   jobs: the five policy documents the assistant reads aloud (`content/policies/`), and the unit
   tests for the pure modules (`tests/shared.test.ts`).
-- **Telnyx-hosted models run the product:** Kimi-K2.6 runs the Disruption Desk and GLM-5.2 runs
-  the Mandarin Desk.
+- **Telnyx-hosted models run the product:** Kimi-K2.6 runs both desks. GLM-5.2 was tried for the
+  Mandarin Desk.
 
 ## Setup
 
@@ -33,7 +33,7 @@ Config: [`.opencode/opencode.json`](.opencode/opencode.json) (plugin active, def
 | Policy documents | `zai-org/GLM-5.3-Flash` | Mechanical writing to a spec; the cheapest model Telnyx recommends for agentic work |
 | Unit tests | `moonshotai/Kimi-K3` (after GLM-5.3 stalled) | Needs to read three modules and reason about edge cases |
 | Voice assistant (runtime) | `moonshotai/Kimi-K2.6` | Telnyx's default voice model, verified for assistants |
-| Mandarin desk (runtime) | `zai-org/GLM-5.2` | A different model for the second persona; voice-verified |
+| Mandarin desk (runtime) | `moonshotai/Kimi-K2.6` | First GLM-5.2, which drifted into English after the handoff (the history and tool results were English). Kimi held Chinese better |
 
 Kimi-K3 and GLM-5.3 can't be the voice model: Telnyx marks them chat-only.
 

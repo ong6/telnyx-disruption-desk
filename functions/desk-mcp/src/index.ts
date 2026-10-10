@@ -20,13 +20,17 @@ const rpcError = (id: unknown, code: number, message: string) => Response.json({
  * the webhook saw, and the webhook bound the caller to it in a CallSession actor. Tests and the
  * load script use the admin token plus x-trace-id / x-test-booking.
  */
-function authenticate(req: Request): CallClaims | null {
+async function authenticate(req: Request, env: any): Promise<CallClaims | null> {
   const bearer = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (!bearer) return null;
   if (bearer === process.env.DESK_ADMIN_TOKEN)
     return { trace: req.headers.get("x-trace-id") ?? `test-${Date.now()}`, caller: "", booking: (req.headers.get("x-test-booking") ?? "").toUpperCase() };
   if (bearer !== process.env.DESK_MCP_BEARER) return null;
-  return { trace: traceFrom(req.headers.get("traceparent"), "mcp-" + Date.now()), caller: "", booking: "" };
+  const tp = traceFrom(req.headers.get("traceparent"), "");
+  if (!tp) return { trace: "mcp-" + Date.now(), caller: "", booking: "" };
+  // Follow the webhook's link from this turn's trace id to the conversation's first one.
+  const link = await env.CALL.idFromName(tp).get().catch(() => null);
+  return { trace: link?.canonical || tp, caller: "", booking: "" };
 }
 
 export default {
@@ -37,7 +41,7 @@ export default {
     if (url.pathname !== "/mcp" && url.pathname !== "/") return new Response("not found", { status: 404 });
     if (req.method !== "POST") return new Response("method not allowed", { status: 405, headers: { allow: "POST" } });
     const log = makeLogger("mcp", env);
-    const claims = authenticate(req);
+    const claims = await authenticate(req, env);
     if (!claims) {
       log.info("unauthorized", { path: url.pathname });
       return Response.json({ error: "unauthorized" }, { status: 401, headers: { "www-authenticate": "Bearer" } });

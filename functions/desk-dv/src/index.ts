@@ -53,6 +53,7 @@ export default {
       ? p.trace_id
       : traceFrom(req.headers.get("traceparent"), `c${createHash("sha1").update(callId).digest("hex").slice(0, 12)}`);
     const signed = signatureValid(req, raw);
+    const turnTrace = traceFrom(req.headers.get("traceparent"), "");
 
     try {
       // Flags come from memory; on a cold process we don't wait for KV past the budget and leave
@@ -69,8 +70,16 @@ export default {
       const [t, flight] = await Promise.all([
         tripStub ? within(tripStub.startCall(trace) as Promise<TripState | null>, left(), null) : null,
         booking ? within(pss(env, trace, log).flight(booking.flight, booking.date), left(), null) : null,
-        // Bind this conversation for the MCP server: who called, which booking caller ID found.
-        within(env.CALL.idFromName(trace).start(caller, booking?.code ?? "") as Promise<void>, left(), undefined),
+        // Bind this conversation for the MCP server: who called, which booking caller ID found,
+        // and link this turn's trace id to the conversation's (MCP may start on any turn).
+        within(
+          Promise.all([
+            env.CALL.idFromName(trace).start(caller, booking?.code ?? ""),
+            turnTrace && turnTrace !== trace ? env.CALL.idFromName(turnTrace).link(trace) : null,
+          ]) as Promise<unknown>,
+          left(),
+          undefined,
+        ),
       ]);
       const degraded = !!(signed && caller && (!booking || !flight || !t)) && Date.now() - t0 >= BUDGET_MS;
       const hold = t?.hold && t.hold.expiresAt > Date.now() ? t.hold : undefined;

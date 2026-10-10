@@ -39,6 +39,7 @@ How you speak (this is a phone call):
 - If a tool returns not_verified, verify the caller first (booking code and last name).
 - If a tool returns an error, apologise in one sentence and offer a person or a callback. Never guess.
 - If the caller asks for a person, don't argue: route them.
+- Never tell a caller you only speak English. Chinese speakers are routed to the Chinese-speaking desk.
 
 What our systems know about this call:
 - Known caller: {{caller_known}}. Name: {{first_name}}. Booking: {{booking_code}} ({{pax_count}} passengers). Tier: {{tier}}.
@@ -138,7 +139,7 @@ async function main() {
   // 3. Secondary assistant: Mandarin desk (different persona, model, voice and speech-to-text).
   const zhBody = {
     name: "Nimbus Air Mandarin Desk",
-    model: "zai-org/GLM-5.2",
+    model: "moonshotai/Kimi-K2.6", // GLM-5.2 drifted into English after the handoff in testing
     instructions: MANDARIN_INSTRUCTIONS,
     greeting: "您好，这里是 Nimbus Air 中文服务。我已经看到您刚才的情况，请问需要我怎么帮您？",
     voice_settings: { voice: VOICE_ZH, language_boost: "Chinese" },
@@ -155,10 +156,9 @@ async function main() {
 
   // 4. Main assistant with the workflow.
   const { flow, scope } = buildFlow({ transferToolId: transfer.id, hangupToolId: hangup.id, mandarinAssistantId: zh.id });
-  // MCP tools can't be listed per node (nodes take shared tool ids only), and "replace" with an
-  // empty list strips them. So: nodes that need the booking tools inherit them ("append"), nodes
-  // that must not act ("replace") get none. The MCP server enforces the rest (no confirm without
-  // a hold, no change without a verified booking).
+  // Only shared tools can be scoped per node; MCP tools stay available on every node whatever
+  // the tools_mode (DEBUGLOG #4). So the MCP server enforces the business rules itself (no
+  // confirm without a live hold, no change without a verified booking).
   for (const node of flow.nodes) {
     if (node.type !== "prompt") continue;
     const needsMcp = (scope[node.id] ?? []).length > 0;
@@ -176,9 +176,14 @@ async function main() {
     dynamic_variables_webhook_timeout_ms: 8000,
     dynamic_variables: DEFAULT_VARS,
     mcp_servers: [{ id: mcp.id, allowed_tools: ALL_TOOLS }],
-    tool_ids: [verify.id, transfer.id, hangup.id],
+    // No assistant-level tools: each node lists exactly what it may use (verify on the booking
+    // nodes, hangup on wrap-up), and transfer is reached only through the tool nodes behind the
+    // handoff gate, so the model can't transfer around the human-queue check.
+    tool_ids: [],
     enabled_features: ["telephony"],
     telephony_settings: { supports_unauthenticated_web_calls: true, time_limit_secs: 900 },
+    // The ops console embeds <telnyx-ai-agent>; it renders nothing until widget_settings exist.
+    widget_settings: { theme: "dark", position: "static", default_state: "expanded", start_call_text: "Talk to the desk", agent_thinking_text: "Checking...", speak_to_interrupt_text: "Speak to interrupt" },
     conversation_flow: flow,
   };
   const main = await upsertByName("/ai/assistants", "/ai/assistants", { method: "POST", path: (id) => `/ai/assistants/${id}` }, mainBody.name, mainBody);

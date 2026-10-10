@@ -13,8 +13,8 @@ database. Nimbus Air is fictional.
 
 | What | Where |
 |---|---|
-| Call the desk | **+1 743 888 2787** (see the trial-account note below) |
-| Web call | Portal → AI Assistants → *Nimbus Air Disruption Desk* → Test |
+| **Talk to it in your browser** | The ops console's *Talk to the desk* button (a WebRTC call to the same assistant) |
+| Call the desk | **+1 743 888 2787**. This runs on a Telnyx trial account, which only accepts calls from its verified number, so the phone line is shown live on demo day and the browser call works for everyone else |
 | Ops console (live seats, calls, traces, health) | https://desk-ops-68bad318-0.telnyxcompute.com |
 | MCP server (Streamable HTTP, POST only) | https://desk-mcp-299d7f49-1.telnyxcompute.com/mcp |
 | Dynamic variables webhook | https://desk-dv-da3c8445-f.telnyxcompute.com |
@@ -117,9 +117,13 @@ evaluates these before the model's turn. What the caller wants is routed by the 
 **Append vs replace.** Every node appends to the base prompt (persona, phone manner, "only offer
 flights a tool returned"), so those rules hold everywhere.
 
-**Tool scoping.** Nodes take only shared tools by ID; MCP tools can't be listed per node. So nodes
-that change bookings inherit the MCP tools, nodes that must not act get none, and the MCP server
-enforces the rules itself.
+**Tool scoping.**
+- **Shared tools are scoped per node.** `verify_booking` exists only on rebook, refund and status;
+  `hangup` only on wrap-up. Transfer is reachable only through the tool nodes behind the handoff
+  gate, so the model can't transfer around the human-queue check.
+- **MCP tools are assistant-wide on Telnyx.** Node tool modes don't remove them (DEBUGLOG #4), so
+  the MCP server enforces the business rules itself: no confirm without a live hold, no change
+  without a verified booking, no refund unless the flight was disrupted.
 
 ## Proof: 300 callers, 60 seats
 
@@ -154,7 +158,7 @@ and the trial account caps outbound calls at 2.
 
 | Stretch goal | Where |
 |---|---|
-| Multi-assistant routing | `n_triage` → *Mandarin Desk* (GLM-5.2, Mandarin voice and speech-to-text, its own prompt), `voice_mode: distinct` |
+| Multi-assistant routing | `n_triage` → *Mandarin Desk*: its own persona and prompt, a Mandarin voice and speech-to-text, and its own tool set (no refunds), with `voice_mode: distinct` |
 | Variable comparison edges | `disruption_mode`, `special_assistance && human_queue`, `human_queue`, `telnyx_conversation_duration_secs >= 300` |
 | Alarms in actors | `Flight` (hold expiry, waitlist offers), `Trip` (outbound callback call), `Canary` (every minute) |
 | Object storage | Policy documents read by `get_policy`; an itinerary receipt written per rebooking (`receipts/<code>.json`) |
@@ -190,7 +194,7 @@ and the trial account caps outbound calls at 2.
 ```bash
 source scripts/env.sh                  # repo-local telnyx-edge and opencode, .env
 telnyx-edge secrets add ...            # DESK_ADMIN_TOKEN, PSS_API_KEY, DESK_MCP_BEARER, DESK_TELNYX_KEY, DEMO_CALLER_NUMBER
-for f in functions/*; do (cd $f && npm i && telnyx-edge ship); done
+for f in functions/*; do (cd $f && npm i && telnyx-edge ship); done   # one at a time: parallel ships get HTTP 429; each takes 6-25 min
 node assistant/build.mjs               # MCP server, tools, both assistants, workflow, number
 curl -X POST $OPS/api/scenario -H "authorization: Bearer $DESK_ADMIN_TOKEN" -d '{"id":"typhoon"}'
 node scripts/chat.mjs "Hi, my flight was cancelled" "Find me the earliest flight"

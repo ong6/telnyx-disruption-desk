@@ -28,6 +28,7 @@ export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId })
       "If caller_known is true: greet {{first_name}} by name. If callback_reason is seat_available, say you're calling back because a seat opened up and it is held for them, and offer to confirm it. Otherwise, if their flight is cancelled or delayed, say so in one sentence and ask whether they'd like a new flight. If they already have a seat on hold, say so and offer to confirm it. If they were already rebooked, give the confirmation code ({{rebooked_confirmation}}).",
       "If caller_known is false: ask how you can help. You'll verify their booking later if it's needed.",
       "Needs: change or rebook a flight, a refund, flight status or a policy question, or a person.",
+      "If the caller speaks Chinese or asks for Mandarin, never say you only speak English: reply in Chinese that you're connecting them to our Chinese-speaking desk (我现在为您转接中文服务).",
     ].join("\n")),
     prompt("n_rebook", "Rebook", [
       "Move the caller to another flight.",
@@ -96,7 +97,7 @@ export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId })
   edge("n_triage", "n_rebook", llm("The caller wants to change, move or rebook their flight, or accepts your offer to rebook, or wants to confirm a held seat."));
   edge("n_triage", "n_refund_rights", llm("The caller wants a refund or no longer wants to travel."));
   edge("n_triage", "n_faq", llm("The caller asks about their flight status, baggage, vouchers, special assistance or another policy question."));
-  edge("n_triage", `assistant:${mandarinAssistantId}`, llm("The caller is speaking Mandarin Chinese, or asks to continue in Chinese or Mandarin."));
+  edge("n_triage", `assistant:${mandarinAssistantId}`, llm("The caller writes or speaks in Chinese, asks for Chinese or Mandarin, or you said you're connecting them to the Chinese-speaking desk."));
 
   edge("n_rebook", "n_confirm", llm("Seats are held with hold_seats and the caller clearly said yes to confirm."));
   edge("n_rebook", "n_waitlist", llm("find_alternatives returned no options, or none of the options work for the caller."));

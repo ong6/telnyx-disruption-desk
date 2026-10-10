@@ -34,12 +34,17 @@ button:hover{border-color:var(--amber)}button.danger{border-color:#5a2a27}input{
 </style></head><body>
 <header><h1>Nimbus Air · Disruption Desk</h1><span id="mode" class="pill">—</span><span id="queue" class="pill">—</span><span id="health" class="pill">canary —</span><span id="scn" class="mut"></span></header>
 <main>
+<section class="wide" style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between">
+<div><h2 style="margin:0 0 6px">Talk to the desk</h2><div class="mut">Call from this browser (allow the microphone). Phone: +1 743 888 2787 (trial account: only the verified number can dial in).
+<br>Web calls are treated as the demo passenger, Jun (booking K7Q2ZX), while <b>web calls as demo caller</b> is on; turn it off to verify with a booking from the README.</div></div>
+<telnyx-ai-agent agent-id="assistant-dbc59018-c2bb-437f-86bd-1030a9c5271b"></telnyx-ai-agent>
+</section>
 <div class="kpis" id="kpis"></div>
 <section class="board"><h2>Departures · Singapore → Hong Kong</h2><table><thead><tr><th>Flight</th><th>Date</th><th>Dep</th><th>Status</th><th>Seats left</th><th>Held</th><th>Waitlist</th><th></th><th></th></tr></thead><tbody id="flights"></tbody></table></section>
 <section class="side"><h2>Controls</h2>
 <div class="controls"><input id="key" type="password" placeholder="admin token (stored in this browser)"></div>
 <div class="controls"><button onclick="act('/api/scenario',{id:'normal'})">Normal day</button><button class="danger" onclick="act('/api/scenario',{id:'typhoon'})">Typhoon hits HKG</button><button onclick="act('/api/relief',{})">+ Relief flight NB870</button></div>
-<div class="controls"><button onclick="flag('disruption_mode')">Toggle disruption flag</button><button onclick="flag('human_queue')">Toggle human queue</button>
+<div class="controls"><button onclick="flag('disruption_mode')">Toggle disruption flag</button><button onclick="flag('human_queue')">Toggle human queue</button><button onclick="flag('web_calls_as_demo_caller')">Toggle web calls as demo caller</button>
 <select id="ttl" onchange="act('/api/flags',{hold_ttl_secs:Number(this.value)})"><option value="600">hold 10 min</option><option value="120">hold 2 min</option><option value="45">hold 45 s</option></select></div>
 <div class="controls"><button onclick="act('/api/canary',{run:true})">Start canary</button><button onclick="act('/api/canary',{run:false})">Stop canary</button><button onclick="act('/api/metrics/reset',{})">Reset counters</button></div>
 <h2 style="margin-top:16px">Canary · last 30 minutes</h2><div class="spark" id="spark"></div><div class="mut" id="canarytxt" style="font:12px var(--mono);margin-top:6px"></div>
@@ -49,6 +54,7 @@ button:hover{border-color:var(--amber)}button.danger{border-color:#5a2a27}input{
 <h2 style="margin-top:16px">Human callback queue</h2><table><tbody id="cbs"></tbody></table></section>
 <section class="wide"><h2>Trace <span id="tid" class="mut"></span></h2><div id="trace" class="mut">Click a trace id to see one call's path: assistant → webhook → KV / actor → MCP → reservation system.</div></section>
 </main><div id="toast"></div>
+<script async src="https://unpkg.com/@telnyx/ai-agent-widget@0.36.0"></script>
 <script>
 const $=id=>document.getElementById(id);const keyEl=$('key');try{keyEl.value=localStorage.getItem('desk-key')||''}catch(e){}
 keyEl.onchange=()=>{try{localStorage.setItem('desk-key',keyEl.value)}catch(e){}};
@@ -56,12 +62,12 @@ let S=null;const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&l
 const ago=t=>{const s=Math.round((Date.now()-t)/1000);return s<60?s+'s ago':Math.round(s/60)+'m ago'};
 function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',3500)}
 async function act(path,body){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+keyEl.value},body:JSON.stringify(body)});const j=await r.json();toast(r.ok?'done: '+path:'error: '+(j.error||r.status));load()}
-function flag(name){const cur=S?.flags?.[name];const next=name==='disruption_mode'?(cur==='on'?'off':'on'):(cur==='full'?'open':'full');act('/api/flags',{[name]:next})}
+function flag(name){const cur=S?.flags?.[name];const next=name==='human_queue'?(cur==='full'?'open':'full'):(cur==='on'?'off':'on');act('/api/flags',{[name]:next})}
 function sum(c,pred){return Object.entries(c).filter(([k])=>pred(k)).reduce((n,[,v])=>n+v,0)}
 function render(s){S=s;const f=s.flags;
 $('mode').textContent='disruption '+f.disruption_mode;$('mode').className='pill '+(f.disruption_mode==='on'?'on':'');
 $('queue').textContent='human queue '+f.human_queue;$('queue').className='pill '+(f.human_queue==='full'?'warn':'');
-$('scn').textContent=s.scenario?('scenario: '+s.scenario.id+' · base '+s.scenario.baseDate+' · hold '+f.hold_ttl_secs+'s'):'no scenario loaded';
+$('scn').textContent=(s.scenario?('scenario: '+s.scenario.id+' · base '+s.scenario.baseDate+' · hold '+f.hold_ttl_secs+'s'):'no scenario loaded')+' · web calls as demo caller: '+f.web_calls_as_demo_caller;
 const runs=s.canary.runs||[];const last=runs[0];const fresh=last&&Date.now()-last.at<90000;const good=last&&last.dv.ok&&last.mcpList.ok&&last.mcpTool.ok;
 $('health').textContent=!s.canary.running?'canary off':(fresh&&good?'healthy · '+ago(last.at):'UNHEALTHY');$('health').className='pill '+(!s.canary.running?'':(fresh&&good?'ok':'on'));
 $('spark').innerHTML=runs.slice().reverse().map(r=>{const ok=r.dv.ok&&r.mcpList.ok&&r.mcpTool.ok;const h=Math.min(20,4+Math.max(r.dv.ms,r.mcpTool.ms)/150);return '<i class="'+(ok?'':'bad')+'" style="height:'+h+'px" title="'+new Date(r.at).toLocaleTimeString()+' dv '+r.dv.ms+'ms tool '+r.mcpTool.ms+'ms"></i>'}).join('');

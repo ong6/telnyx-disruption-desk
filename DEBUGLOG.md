@@ -37,17 +37,18 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
 - **Fix.** A silent prompt node, `n_route`, after the disclosure does the variable comparison.
   Expression edges run before the model's turn, so it passes straight through without speaking.
 
-## 4. The assistant never called an MCP tool
+## 4. The assistant never called an MCP tool (first diagnosis was wrong)
 
 - **Symptom.** In the chat test, the assistant kept asking for a booking code even though the
-  webhook had identified the caller. The MCP server logged no `tools/call` from the assistant at
-  all, only the canary.
-- **Cause.** I had set every node to `tools_mode: "replace"` with only shared tools listed. MCP
-  tools aren't shared tools, so "replace" removed them from every node.
-- **Fix.** Nodes that need booking tools use `append` (they inherit the MCP server); nodes that
-  must not act use `replace` with no tools. The MCP server enforces the business rules itself (no
-  confirm without a live hold, no change without a verified booking). Safety doesn't depend on
-  which tools a node can see.
+  webhook had identified the caller. The MCP server logged no `tools/call` from the assistant.
+- **First diagnosis (wrong).** I assumed `tools_mode: "replace"` on a node removed the MCP tools
+  and switched the booking nodes to `append`.
+- **What it actually was.** The MCP credential problem in #8. Later, the assistant called an MCP
+  tool (`request_callback`) from the triage node, which is `replace` with no shared tools. So
+  node tool modes don't remove MCP tools at all.
+- **What that means.** Only shared tools (webhook, transfer, hangup) can be scoped per node. MCP
+  tools are assistant-wide, which is why the MCP server, not the prompt, enforces every business
+  rule.
 
 ## 5. KV reads take more than a second from a function
 
@@ -129,3 +130,24 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
     distributed trace is keyed by Telnyx's own trace ID.
   - If a binding were ever missing, tools answer `not_verified` and the caller is asked for the
     booking code and last name: slower, never wrong.
+
+## 9. In chat, webhook-tool templates use the assistant's default variables
+
+- **Symptom.** After three wrong booking codes in chat, the assistant said "you have two more
+  tries": the failure counter never accumulated.
+- **Evidence.** The verify spans were stored under `wh-<timestamp>` traces, the fallback for a
+  missing `x-trace-id`. I pointed the tool at the local probe for one chat. Telnyx sent
+  `x-trace-id: ''` (the default variable, not the webhook's value). `{{telnyx_conversation_id}}`
+  and `{{telnyx_end_user_target}}` arrived as literal text. There was no `traceparent` at all.
+- **Cause.** In chat the webhook runs lazily (#6), and tool templates resolve against the
+  assistant's defaults.
+- **Status.** On a call the webhook runs at setup, so `{{trace_id}}` should resolve. That is
+  still unverified and is in the live-call checklist. The lockout's routing itself is
+  deterministic: `verify_booking` stores `attempts_left` and an expression edge routes on it.
+
+## 10. In chat, a handoff to the second assistant replays the first one's opening every turn
+
+- **Evidence.** In conversation `c8dcf8c4`, the messages after the handoff show the main
+  assistant's `n_open` and `n_incident` speak nodes again before every Mandarin Desk reply.
+- **Status.** This is a chat-channel quirk, not something the workflow controls. I'll check the
+  handoff again on a web call.
