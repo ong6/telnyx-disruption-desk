@@ -1,0 +1,5 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["@telnyx/opencode"],
+  "model": "telnyx/zai-org/GLM-5.3-Flash"
+}

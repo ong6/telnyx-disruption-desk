@@ -1,0 +1,9 @@
+node_modules/
+.tools/
+.env
+.env.*
+!.env.example
+*.log
+dist/
+.DS_Store
+.worktrees/

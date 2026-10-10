@@ -1,0 +1,31 @@
+name = "desk-mcp"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+# desk-mcp owns the actor classes; desk-dv and desk-ops bind the same types (shared actors).
+[[actors]]
+binding = "FLIGHT"
+type = "Flight"
+
+[[actors]]
+binding = "TRIP"
+type = "Trip"
+
+[[actors]]
+binding = "METRICS"
+type = "Metrics"
+
+[storage.kv.KV]
+id = "22a353f3-671d-4118-87f3-04ba6a1070aa"
+
+[storage.cloudstorage.DOCS]
+bucket_name = "nimbus-desk-5feb1a"
+region = "ap-southeast-1"
+
+# Injects TELNYX_API_KEY so the Trip actor can place callback calls.
+[telnyx]
+binding = "TELNYX"
+
+[edge_compute]
+func_id = "299d7f49-14d7-417f-abbc-e0c22a3a95cc"
+func_name = "desk-mcp"

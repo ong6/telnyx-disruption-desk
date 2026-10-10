@@ -1,0 +1,28 @@
+name = "desk-ops"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+# Owned here: the canary that proves the line works every minute.
+[[actors]]
+binding = "CANARY"
+type = "Canary"
+
+# Shared actors owned by desk-mcp.
+[[actors]]
+binding = "FLIGHT"
+type = "Flight"
+
+[[actors]]
+binding = "TRIP"
+type = "Trip"
+
+[[actors]]
+binding = "METRICS"
+type = "Metrics"
+
+[storage.kv.KV]
+id = "22a353f3-671d-4118-87f3-04ba6a1070aa"
+
+[edge_compute]
+func_id = "68bad318-0d81-4fe8-861f-6a803efb0d48"
+func_name = "desk-ops"

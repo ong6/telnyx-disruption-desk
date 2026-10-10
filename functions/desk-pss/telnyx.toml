@@ -1,0 +1,10 @@
+name = "desk-pss"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[storage.sqldb.DB]
+id = "c9e91b41-bc3d-4500-8950-650b26dc27e6"
+
+[edge_compute]
+func_id = "0c8faf8c-01ee-4ed3-8b6e-72b4df44a74a"
+func_name = "desk-pss"

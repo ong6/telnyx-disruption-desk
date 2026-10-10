@@ -1,0 +1,10 @@
+{
+  "name": "telnyx-disruption-desk",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Airline disruption rebooking desk on Telnyx Voice AI + Edge Compute",
+  "devDependencies": {
+    "opencode-ai": "^1.18.35"
+  }
+}

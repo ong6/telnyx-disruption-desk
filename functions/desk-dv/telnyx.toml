@@ -1,0 +1,22 @@
+name = "desk-dv"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+# Shared actors: the classes are owned and shipped by desk-mcp.
+[[actors]]
+binding = "TRIP"
+type = "Trip"
+
+[[actors]]
+binding = "METRICS"
+type = "Metrics"
+
+[storage.kv.KV]
+id = "22a353f3-671d-4118-87f3-04ba6a1070aa"
+
+[env_vars]
+TELNYX_PUBLIC_KEY = "ufZh9LS32Dfh0xF4aZs3RMKSIPERXoU2FrqipT9iwew="
+
+[edge_compute]
+func_id = "da3c8445-ff04-43cf-a0c3-c3bc24fddcea"
+func_name = "desk-dv"
