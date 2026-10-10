@@ -1,0 +1,4 @@
+stampede 2026-10-10T15:45:16.548Z: 300 concurrent callers, 60 seats
+mode   granted  store says  oversold  errors  wall ms
+actor       60          60         0       0     8542
+kv         300           1       240       0     9686

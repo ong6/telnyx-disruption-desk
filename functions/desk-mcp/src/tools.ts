@@ -19,10 +19,13 @@ type Args = Record<string, any>;
 type Tool = { description: string; inputSchema: object; run: (ctx: ToolCtx, args: Args) => Promise<object> };
 
 const city = (iata: string) => AIRLINE.cities[iata] ?? iata;
+const policyMemo = new Map<string, { at: number; text: string }>();
 const MAX_VERIFY_ATTEMPTS = 3;
 
+const session = (ctx: ToolCtx) => ctx.env.CALL.idFromName(ctx.claims.trace);
+
 async function sessionBooking(ctx: ToolCtx): Promise<string> {
-  return ctx.claims.booking || ((await ctx.env.KV.get(`call/${ctx.claims.trace}`)) ?? "");
+  return ctx.claims.booking || (await session(ctx).get()).booking;
 }
 
 async function requireBooking(ctx: ToolCtx): Promise<PssBooking> {
@@ -79,19 +82,18 @@ export const TOOLS: Record<string, Tool> = {
       required: ["booking_code", "last_name"],
     },
     async run(ctx, { booking_code, last_name }) {
-      const failKey = `call/${ctx.claims.trace}/fails`;
-      const fails = Number((await ctx.env.KV.get(failKey)) ?? 0);
+      const { fails } = await session(ctx).get();
       if (fails >= MAX_VERIFY_ATTEMPTS) return { verified: false, attempts_left: 0, next: "transfer the caller to a person" };
       const code = String(booking_code ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
       const b = code ? await pss(ctx.env, ctx.claims.trace, ctx.log).booking(code) : null;
       const ok = !!b && b.last_name.toLowerCase() === String(last_name ?? "").trim().toLowerCase();
       if (!ok) {
-        await ctx.env.KV.put(failKey, String(fails + 1), { expirationTtl: 7200 });
+        await session(ctx).fail();
         if (b) await trip(ctx, b.code).verifyFailed();
         const left = MAX_VERIFY_ATTEMPTS - fails - 1;
         return { verified: false, attempts_left: left, next: left > 0 ? "ask the caller to check the code and try again" : "transfer the caller to a person" };
       }
-      await ctx.env.KV.put(`call/${ctx.claims.trace}`, b!.code, { expirationTtl: 7200 });
+      await session(ctx).bind(b!.code);
       return { verified: true, ...(await caseSummary(ctx, b!)) };
     },
   },
@@ -217,7 +219,7 @@ export const TOOLS: Record<string, Tool> = {
       const code = await sessionBooking(ctx);
       if (code) await trip(ctx, code).escalated(String(reason ?? "callback requested"));
       const entry = { at: Date.now(), trace: ctx.claims.trace, booking: code, caller: ctx.claims.caller, reason: String(reason ?? "") };
-      await ctx.env.KV.put(`callbacks/${entry.at}-${ctx.claims.trace}`, JSON.stringify(entry), { expirationTtl: 86400 * 3 });
+      await ctx.env.METRICS.idFromName("global").callbackBooked(entry);
       return { booked: true, expected_within: "2 hours", number: code ? "the number on the booking" : "the number you are calling from" };
     },
   },
@@ -226,13 +228,12 @@ export const TOOLS: Record<string, Tool> = {
     description: "Airline policy text for questions about baggage, refunds, the typhoon waiver, special assistance or vouchers. Answer only from this text.",
     inputSchema: { type: "object", properties: { topic: { type: "string", enum: ["baggage", "refunds", "disruption", "special-assistance", "vouchers"] } }, required: ["topic"] },
     async run(ctx, { topic }) {
-      const key = `cache/policy/${topic}`;
-      const cached = await ctx.env.KV.get(key);
-      if (cached) return { topic, text: cached, source: "kv-cache" };
+      const cached = policyMemo.get(topic);
+      if (cached && Date.now() - cached.at < 300_000) return { topic, text: cached.text, source: "memory" };
       const obj = await ctx.env.DOCS.get(`policies/${topic}.md`);
       if (!obj || !("text" in obj)) throw new ToolError("no_policy", `No policy document for ${topic}`);
       const text = await obj.text();
-      await ctx.env.KV.put(key, text, { expirationTtl: 300 });
+      policyMemo.set(topic, { at: Date.now(), text });
       return { topic, text, source: "cloud-storage" };
     },
   },

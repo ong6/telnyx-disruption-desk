@@ -44,6 +44,7 @@ export default {
         const patch = Object.fromEntries(Object.entries(body).filter(([k]) => allowed.includes(k as keyof Flags)));
         const flags = await writeFlags(env, patch);
         log.info("flags", { patch });
+        if ("disruption_mode" in patch || "human_queue" in patch) await syncAssistantDefaults(env, log);
         return json(flags);
       }
       if (path === "/api/relief" && req.method === "POST") {
@@ -51,7 +52,6 @@ export default {
         const base = scenario?.baseDate ?? sgDate(0);
         const f = await pssFetch("/v1/admin/flights", { method: "POST", body: JSON.stringify({ baseDate: base }) });
         const snap = await env.FLIGHT.idFromName(flightId(f.number, f.date)).init({ id: flightId(f.number, f.date), number: f.number, date: f.date, dep: f.dep, arr: f.arr, from: f.origin, to: f.dest, status: f.status, capacity: f.capacity, sold: f.sold });
-        await clearPssCache(env);
         log.info("relief_flight", { flight: snap.id });
         return json(snap);
       }
@@ -90,12 +90,25 @@ export default {
   },
 };
 
-async function clearPssCache(env: any) {
-  const { keys } = await env.KV.list({ prefix: "cache/pss", limit: 1000 });
-  await Promise.all(keys.map((k: { name: string }) => env.KV.delete(k.name)));
+/** Rebuild the reservation system, flight actors and trip actors for a scenario. */
+/**
+ * Flags live in KV, but a cold webhook can't wait for a KV read (over a second) inside Telnyx's
+ * ~1.2 s window. So every flag change is also written into both assistants' default dynamic
+ * variables: a call routes on the right flags even if the webhook answers late or leaves them out.
+ */
+async function syncAssistantDefaults(env: any, log: ReturnType<typeof makeLogger>) {
+  const { flags, scenario } = await readConfig(env, true);
+  const ids: string[] = JSON.parse((await env.KV.get("config/assistants")) ?? "[]");
+  const patch = { disruption_mode: flags.disruption_mode, human_queue: flags.human_queue, incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "" };
+  const headers = { authorization: `Bearer ${process.env.DESK_TELNYX_KEY}`, "content-type": "application/json" };
+  await Promise.all(ids.map(async (id) => {
+    const cur = await (await fetch(`https://api.telnyx.com/v2/ai/assistants/${id}`, { headers })).json() as any;
+    const res = await fetch(`https://api.telnyx.com/v2/ai/assistants/${id}`, { method: "POST", headers, body: JSON.stringify({ dynamic_variables: { ...(cur.dynamic_variables ?? cur.data?.dynamic_variables ?? {}), ...patch } }) });
+    log.info("assistant_defaults", { id, status: res.status, ...patch, incident_notice: patch.incident_notice ? "set" : "" });
+  }));
+  return patch;
 }
 
-/** Rebuild the reservation system, flight actors and trip actors for a scenario. */
 async function loadScenario(env: any, id: string, log: ReturnType<typeof makeLogger>) {
   const baseDate = sgDate(0);
   const incident = INCIDENTS[id];
@@ -112,8 +125,8 @@ async function loadScenario(env: any, id: string, log: ReturnType<typeof makeLog
   const scenario: Scenario = { id, baseDate, notice: incident?.notice ?? "", cancelled: reset.cancelled ?? [], loadedAt: Date.now() };
   await env.KV.put("scenario/active", JSON.stringify(scenario));
   await writeFlags(env, { disruption_mode: incident ? "on" : "off" });
-  await clearPssCache(env);
   resetConfigCache();
+  await syncAssistantDefaults(env, log);
   log.info("scenario", { id, baseDate, flights: flights.length, cancelled: scenario.cancelled });
   return { scenario, flights: flights.length, bookings: BOOKINGS.length };
 }
@@ -131,8 +144,7 @@ async function state(env: any) {
     env.CANARY.idFromName("main").runs(),
   ]);
   const trips = await Promise.all(BOOKINGS.map((b) => env.TRIP.idFromName(b.code).get().catch(() => null)));
-  const cbKeys = (await env.KV.list({ prefix: "callbacks/", limit: 50 })).keys as { name: string }[];
-  const callbacks = (await Promise.all(cbKeys.slice(-10).map((k) => env.KV.get(k.name)))).filter(Boolean).map((s: string) => JSON.parse(s)).map((c: any) => ({ ...c, caller: maskPhone(c.caller) })).reverse();
+  const callbacks = (metrics.callbacks ?? []).map((c: any) => ({ ...c, caller: maskPhone(c.caller) }));
   return {
     now: Date.now(),
     flags,

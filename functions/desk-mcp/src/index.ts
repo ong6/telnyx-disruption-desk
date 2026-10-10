@@ -4,6 +4,7 @@
 export { Flight } from "./flight";
 export { Trip } from "./trip";
 export { Metrics } from "./metrics";
+export { CallSession } from "./call";
 import { makeLogger } from "../../../shared/log";
 import { verifyClaims } from "../../../shared/token";
 import type { CallClaims } from "../../../shared/types";

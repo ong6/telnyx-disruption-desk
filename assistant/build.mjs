@@ -74,7 +74,22 @@ async function upsertByName(listPath, createPath, updatePath, name, body, nameFi
   return api("POST", createPath, body);
 }
 
+async function kvGet(key) {
+  const r = await fetch(`${API}/storage/kvs/${KV_NAMESPACE}/keys/${encodeURIComponent(key)}`, { headers: { authorization: `Bearer ${TELNYX_API_KEY}` } });
+  return r.ok ? r.text() : null;
+}
+const kvPut = (key, value) => api("PUT", `/storage/kvs/${KV_NAMESPACE}/keys/${encodeURIComponent(key)}`, value);
+
 async function main() {
+  // Default variables carry the live flags too, so a late webhook still routes correctly.
+  const flags = JSON.parse((await kvGet("flags/all")) ?? "{}");
+  const scenario = JSON.parse((await kvGet("scenario/active")) ?? "null");
+  Object.assign(DEFAULT_VARS, {
+    disruption_mode: flags.disruption_mode ?? "off",
+    human_queue: flags.human_queue ?? "open",
+    incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "",
+  });
+
   // 1. MCP server: per-call bearer, decrypted by Telnyx from the webhook's encrypted variable.
   const mcpBody = { name: "nimbus-desk-mcp", type: "http", url: `${URLS.mcp}/mcp`, api_key_ref: "{{mcp_token | mcp_enc_key}}", allowed_tools: ALL_TOOLS };
   const mcp = await upsertByName("/ai/mcp_servers", "/ai/mcp_servers", { method: "PUT", path: (id) => `/ai/mcp_servers/${id}` }, mcpBody.name, mcpBody);
@@ -115,9 +130,14 @@ async function main() {
 
   // 4. Main assistant with the workflow.
   const { flow, scope } = buildFlow({ transferToolId: transfer.id, hangupToolId: hangup.id, mandarinAssistantId: zh.id });
+  // MCP tools can't be listed per node (nodes take shared tool ids only), and "replace" with an
+  // empty list strips them. So: nodes that need the booking tools inherit them ("append"), nodes
+  // that must not act ("replace") get none. The MCP server enforces the rest (no confirm without
+  // a hold, no change without a verified booking).
   for (const node of flow.nodes) {
     if (node.type !== "prompt") continue;
-    node.tools_mode = "replace";
+    const needsMcp = (scope[node.id] ?? []).length > 0;
+    node.tools_mode = needsMcp ? "append" : "replace";
     node.shared_tool_ids = node.id === "n_wrap" ? [hangup.id] : [];
   }
   const mainBody = {
@@ -149,10 +169,9 @@ async function main() {
     console.log("number", DESK_NUMBER, "->", texmlAppId);
   }
   console.log("texml app", texmlAppId ?? "none yet (assign the number in the Portal once)");
-  if (texmlAppId) {
-    await api("PUT", `/storage/kvs/${KV_NAMESPACE}/keys/${encodeURIComponent("config/outbound")}`, JSON.stringify({ texmlAppId, from: DESK_NUMBER, assistantId: main.id }));
-    console.log("kv config/outbound written");
-  }
+  if (texmlAppId) await kvPut("config/outbound", JSON.stringify({ texmlAppId, from: DESK_NUMBER, assistantId: main.id }));
+  await kvPut("config/assistants", JSON.stringify([main.id, zh.id]));
+  console.log("kv config written; default flags", DEFAULT_VARS.disruption_mode, DEFAULT_VARS.human_queue);
 }
 
 main().catch((e) => {

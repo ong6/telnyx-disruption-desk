@@ -76,7 +76,7 @@ export class Trip extends StatefulActor {
     if (!s?.callback || s.callback.placedAt) return;
     const env = this.env as any;
     const cfg = JSON.parse((await env.KV.get("config/outbound")) ?? "null");
-    const apiKey = process.env.TELNYX_API_KEY;
+    const apiKey = await env.SECRETS.get("TELNYX_KEY");
     let result = "skipped: no outbound config";
     if (cfg && apiKey && s.booking.phone.startsWith("+")) {
       const res = await fetch(`https://api.telnyx.com/v2/texml/ai_calls/${cfg.texmlAppId}`, {

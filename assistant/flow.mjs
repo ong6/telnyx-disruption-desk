@@ -20,6 +20,7 @@ const tool = (id, name, shared_tool_id, message) => ({ id, name, type: "tool", s
 export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId }) {
   const nodes = [
     speak("n_open", "Disclosure", "Thanks for calling Nimbus Air. This call may be recorded for quality and training, and you're speaking with our automated assistant. You can ask for a person at any time."),
+    prompt("n_route", "Route opening", "Routing step: say nothing here."),
     speak("n_incident", "Incident notice", "{{incident_notice}}"),
     prompt("n_triage", "Greet & identify need", [
       "Open the conversation and find out what the caller needs.",
@@ -65,6 +66,7 @@ export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId })
 
   // Tools per prompt node (MCP tools are listed by name; build.mjs maps them to the node).
   const scope = {
+    n_route: [],
     n_triage: [],
     n_rebook: ["lookup_booking", "find_alternatives", "hold_seats"],
     n_confirm: ["confirm_rebooking"],
@@ -80,9 +82,11 @@ export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId })
   const edges = [];
   const edge = (from, to, condition) => edges.push({ id: `e${++i}_${from}_${to}`.slice(0, 60), start_node_id: from, target: to.startsWith("assistant:") ? { type: "assistant", assistant_id: to.slice(10), voice_mode: "distinct" } : { type: "node", node_id: to }, condition });
 
-  // Opening: the incident notice plays only when disruption mode is on (flag in KV, via the webhook).
-  edge("n_open", "n_incident", expr(cmp("==", v("disruption_mode"), s("on"))));
-  edge("n_open", "n_triage", DEFAULT);
+  // Opening: the incident notice plays only when disruption mode is on (flag in KV, via the
+  // webhook). A speak node always follows its one default edge, so a silent prompt node routes.
+  edge("n_open", "n_route", DEFAULT);
+  edge("n_route", "n_incident", expr(cmp("==", v("disruption_mode"), s("on"))));
+  edge("n_route", "n_triage", expr(cmp("!=", v("disruption_mode"), s("on"))));
   edge("n_incident", "n_triage", DEFAULT);
 
   // Hard rules first: these run before the model's turn.

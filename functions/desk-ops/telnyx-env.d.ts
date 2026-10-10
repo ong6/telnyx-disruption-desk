@@ -10,6 +10,7 @@ declare global {
     TRIP: __TelnyxActorNamespace;
     METRICS: __TelnyxActorNamespace;
     KV: __TelnyxKvNamespace;
+    SECRETS: { get(binding: "ADMIN_TOKEN"): Promise<string> };
   }
 }
 
@@ -20,6 +21,7 @@ declare module "@telnyx/edge-runtime" {
     TRIP: __TelnyxActorNamespace;
     METRICS: __TelnyxActorNamespace;
     KV: __TelnyxKvNamespace;
+    SECRETS: { get(binding: "ADMIN_TOKEN"): Promise<string> };
   }
 }
 

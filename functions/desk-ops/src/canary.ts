@@ -39,7 +39,8 @@ export class Canary extends StatefulActor {
   async alarm(): Promise<void> {
     if (!(await this.ctx.storage.get("running"))) return;
     const trace = `canary-${Date.now()}`;
-    const admin = { authorization: `Bearer ${process.env.DESK_ADMIN_TOKEN}`, "content-type": "application/json", "x-trace-id": trace };
+    const token = await (this.env as any).SECRETS.get("ADMIN_TOKEN");
+    const admin = { authorization: `Bearer ${token}`, "content-type": "application/json", "x-trace-id": trace };
     const rpc = (method: string, params: object = {}) => JSON.stringify({ jsonrpc: "2.0", id: 1, method, params });
     const [dv, mcpList, mcpTool] = await Promise.all([
       probe(`${URLS.dv}/`, { method: "POST", headers: { "content-type": "application/json", "x-canary": "1" }, body: JSON.stringify({ data: { event_type: "assistant.initialization", payload: { telnyx_conversation_channel: "canary", call_control_id: trace } } }) },

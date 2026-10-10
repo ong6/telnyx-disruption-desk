@@ -4,7 +4,7 @@
 // personalise the conversation and drive the workflow's variable-comparison edges. It also mints
 // the per-call MCP credential.
 import { createHash, createPublicKey, verify } from "node:crypto";
-import { readConfig } from "../../../shared/config";
+import { readConfigFast } from "../../../shared/config";
 import { makeLogger } from "../../../shared/log";
 import { pss, type PssBooking } from "../../../shared/pss-client";
 import { encryptForTelnyx, signClaims } from "../../../shared/token";
@@ -13,6 +13,12 @@ import { AIRLINE } from "../../../shared/seed";
 import { maskPhone, spell, spokenDate, spokenFlight, spokenTime } from "../../../shared/util";
 
 const TOKEN_TTL_MS = 2 * 3600_000;
+// Telnyx stops waiting for this webhook after about 1.2 s, whatever the assistant's configured
+// timeout says (DEBUGLOG #7), and then runs the call on default variables. Answer within budget:
+// past it, fall back to the anonymous path instead of answering late.
+const BUDGET_MS = 900;
+const within = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+  Promise.race([p.catch(() => fallback), new Promise<T>((r) => setTimeout(() => r(fallback), ms))]);
 const SPKI_ED25519_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
 /** Telnyx signs webhooks with Ed25519 over "{timestamp}|{raw body}". */
@@ -46,22 +52,32 @@ export default {
     const signed = signatureValid(req, raw);
 
     try {
-      const { flags, scenario } = await readConfig(env);
+      // Flags come from memory; on a cold process we don't wait for KV past the budget and leave
+      // the flag variables out, so the assistant's own defaults (kept in sync by desk-ops) apply.
+      const cfg = await readConfigFast(env, 500);
+      const flags = cfg?.flags ?? { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "on" as const };
+      const scenario = cfg?.scenario ?? null;
       let caller: string = p.telnyx_end_user_target ?? "";
       if (!caller.startsWith("+") && channel !== "phone_call" && flags.web_calls_as_demo_caller === "on") caller = process.env.DEMO_CALLER_NUMBER ?? "";
       // An unsigned request gets the anonymous path: the call still works, but no booking data leaves.
-      const booking: PssBooking | null = signed && caller ? await pss(env, trace, log).bookingByPhone(caller) : null;
+      const left = () => BUDGET_MS - (Date.now() - t0);
+      const booking: PssBooking | null = signed && caller ? await within(pss(env, trace, log).bookingByPhone(caller), left(), null) : null;
       const tripStub = booking ? env.TRIP.idFromName(booking.code) : null;
       const [t, flight] = await Promise.all([
-        tripStub ? (tripStub.startCall(trace) as Promise<TripState | null>) : null,
-        booking ? pss(env, trace, log).flight(booking.flight, booking.date) : null,
+        tripStub ? within(tripStub.startCall(trace) as Promise<TripState | null>, left(), null) : null,
+        booking ? within(pss(env, trace, log).flight(booking.flight, booking.date), left(), null) : null,
       ]);
+      const degraded = !!(signed && caller && (!booking || !flight || !t)) && Date.now() - t0 >= BUDGET_MS;
       const hold = t?.hold && t.hold.expiresAt > Date.now() ? t.hold : undefined;
       const offerFresh = !!(t?.offer && t.offer.expiresAt > Date.now() && t.callback?.placedAt);
 
+      const flagVars: Record<string, string> = cfg
+        ? { disruption_mode: flags.disruption_mode, incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "", human_queue: flags.human_queue }
+        : {};
       const vars: Record<string, string> = {
         trace_id: trace,
         channel,
+        ...flagVars,
         caller_known: yes(!!booking),
         first_name: booking?.first_name ?? "",
         booking_code: booking?.code ?? "",
@@ -69,13 +85,10 @@ export default {
         pax_count: String(booking?.pax ?? ""),
         flight_spoken: flight ? `${spokenFlight(flight.number)} from ${AIRLINE.cities[flight.origin]} to ${AIRLINE.cities[flight.dest]} on ${spokenDate(flight.date)} at ${spokenTime(flight.dep)}` : "",
         flight_status: flight?.status ?? "",
-        disruption_mode: flags.disruption_mode,
-        incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "",
         flight_disrupted: yes(flight?.status === "cancelled" || flight?.status === "delayed"),
         tier: booking?.tier ?? "none",
         special_assistance: yes(!!booking?.assistance),
         assistance_detail: booking?.assistance ?? "",
-        human_queue: flags.human_queue,
         case_status: t?.status ?? "none",
         has_active_hold: yes(!!hold),
         hold_minutes_left: hold ? String(Math.max(1, Math.round((hold.expiresAt - Date.now()) / 60000))) : "",
@@ -88,8 +101,8 @@ export default {
       const mcp_token = encryptForTelnyx(signClaims(claims, process.env.DESK_SIGNING_KEY ?? ""), process.env.DESK_ENC_KEY ?? "");
 
       const ms = Date.now() - t0;
-      log.span({ trace, op: "webhook", outcome: signed ? "ok" : "unsigned", ms, detail: `${channel} known=${vars.caller_known} status=${vars.flight_status}` });
-      log.info("dv", { trace, channel, caller: maskPhone(caller), booking: vars.booking_code, signed, disruption: flags.disruption_mode, ms });
+      log.span({ trace, op: "webhook", outcome: !signed ? "unsigned" : degraded ? "degraded" : "ok", ms, detail: `${channel} known=${vars.caller_known} status=${vars.flight_status}` });
+      log.info("dv", { trace, channel, caller: maskPhone(caller), booking: vars.booking_code, signed, config: cfg ? "memory" : "assistant-defaults", disruption: flagVars.disruption_mode ?? "default", ms });
       if (!req.headers.get("x-canary")) env.METRICS.idFromName("global").callStarted({ trace, at: Date.now(), caller: maskPhone(caller), booking: vars.booking_code, last: "webhook", outcome: "in_progress" }).catch(() => {});
       return Response.json({
         dynamic_variables: vars,
@@ -102,7 +115,8 @@ export default {
       log.span({ trace, op: "webhook", outcome: "error", ms: Date.now() - t0, detail: String(e?.message ?? e).slice(0, 200) });
       const claims = { trace, caller: "", booking: "", exp: Date.now() + TOKEN_TTL_MS };
       return Response.json({
-        dynamic_variables: { trace_id: trace, caller_known: "false", disruption_mode: "off", human_queue: "open", special_assistance: "false", flight_disrupted: "false", has_active_hold: "false", tier: "none", case_status: "none", incident_notice: "" },
+        // Flag variables are left out so the assistant's defaults (synced by desk-ops) apply.
+        dynamic_variables: { trace_id: trace, caller_known: "false", special_assistance: "false", flight_disrupted: "false", has_active_hold: "false", tier: "none", case_status: "none" },
         encrypted_dynamic_variables: { mcp_token: encryptForTelnyx(signClaims(claims, process.env.DESK_SIGNING_KEY ?? ""), process.env.DESK_ENC_KEY ?? "") },
       });
     }

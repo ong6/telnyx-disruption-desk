@@ -20,6 +20,12 @@ type = "Trip"
 binding = "METRICS"
 type = "Metrics"
 
+# Actor code runs outside the function process, so it reads secrets through the binding,
+# not process.env.
+[[secrets]]
+binding = "ADMIN_TOKEN"
+name = "DESK_ADMIN_TOKEN"
+
 [storage.kv.KV]
 id = "22a353f3-671d-4118-87f3-04ba6a1070aa"
 

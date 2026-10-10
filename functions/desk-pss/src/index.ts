@@ -1,13 +1,14 @@
 // desk-pss: a stand-in for the airline's reservation system (bookings and schedule) in a SQL
 // database, behind a REST API with a partner key. The voice stack treats it as a system it
 // doesn't own: it reads through a KV cache, keeps live seat holds in actors during a surge, and
-// writes back only confirmed changes. LEGACY_LATENCY_MS makes it as slow as the real thing.
+// writes back only confirmed changes. LEGACY_LATENCY_MS (env var, default 0) can make it as slow
+// as a real one for load tests.
 import { BOOKINGS, FLIGHTS, INCIDENTS, RELIEF_FLIGHT } from "../../../shared/seed";
 import { makeLogger } from "../../../shared/log";
 import { addDays, newCode } from "../../../shared/util";
 import type { FlightDef } from "../../../shared/types";
 
-const LEGACY_LATENCY_MS = 250;
+const LEGACY_LATENCY_MS = Number(process.env.LEGACY_LATENCY_MS ?? 0);
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS flights (number TEXT NOT NULL, date TEXT NOT NULL, dep TEXT, arr TEXT, origin TEXT, dest TEXT,
@@ -31,7 +32,7 @@ export default {
     const t0 = Date.now();
     if (req.headers.get("authorization") !== `Bearer ${process.env.PSS_API_KEY}`) return json({ error: "unauthorized" }, 401);
     try {
-      await sleep(LEGACY_LATENCY_MS);
+      if (LEGACY_LATENCY_MS) await sleep(LEGACY_LATENCY_MS);
       const res = await route(req, url, env);
       log.info("request", { trace, method: req.method, path, status: res.status, ms: Date.now() - t0 });
       return res;

@@ -79,5 +79,5 @@ async function showTrace(id){$('tid').textContent=id;const r=await (await fetch(
 const t0=Math.min(...sp.map(x=>x.at-x.ms)),t1=Math.max(...sp.map(x=>x.at)),W=Math.max(1,t1-t0);
 $('trace').innerHTML=sp.map(x=>{const l=100*(x.at-x.ms-t0)/W,w=Math.max(.6,100*x.ms/W);const cls=x.outcome==='error'?'error':x.outcome==='hit'?'hit':'';return '<div class="wf"><i class="'+cls+'" style="left:'+l+'%;width:'+w+'%"></i><span>+'+(x.at-x.ms-t0)+'ms '+esc(x.svc)+' '+esc(x.op)+' · '+esc(x.outcome)+' · '+x.ms+'ms '+esc(x.detail||'')+'</span></div>'}).join('')}
 async function load(){try{const s=await (await fetch('/api/state',{cache:'no-store'})).json();render(s);renderCbs(s)}catch(e){}}
-load();setInterval(load,2000);
+load();setInterval(load,3000);
 </script></body></html>`;

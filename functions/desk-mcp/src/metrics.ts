@@ -37,6 +37,11 @@ export class Metrics extends StatefulActor {
     await this.ctx.storage.put("calls", calls);
   }
 
+  async callbackBooked(entry: { at: number; trace: string; booking: string; caller: string; reason: string }): Promise<void> {
+    const list = (await this.ctx.storage.get<typeof entry[]>("callbacks")) ?? [];
+    await this.ctx.storage.put("callbacks", [entry, ...list].slice(0, 20));
+  }
+
   async summary(minutes = 15) {
     const now = Math.floor(Date.now() / 60_000);
     const buckets = ((await this.ctx.storage.get<Bucket[]>("b")) ?? []).filter((b) => b.minute > now - minutes);
@@ -50,7 +55,8 @@ export class Metrics extends StatefulActor {
     const latency = Object.fromEntries(Object.entries(lat).map(([k, xs]) => [k, { n: xs.length, p50: pct(xs, 0.5), p95: pct(xs, 0.95), max: Math.max(...xs) }]));
     const lastMinute = buckets.find((b) => b.minute === now) ?? buckets.find((b) => b.minute === now - 1);
     const errorsLastMinute = lastMinute ? Object.entries(lastMinute.counts).filter(([k]) => k.endsWith(":error")).reduce((n, [, v]) => n + v, 0) : 0;
-    return { minutes, counts, latency, errorsLastMinute, calls: (await this.ctx.storage.get<CallRow[]>("calls")) ?? [] };
+    const callbacks = (await this.ctx.storage.get<object[]>("callbacks")) ?? [];
+    return { minutes, counts, latency, errorsLastMinute, calls: (await this.ctx.storage.get<CallRow[]>("calls")) ?? [], callbacks };
   }
 
   async reset(): Promise<void> {

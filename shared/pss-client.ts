@@ -1,6 +1,9 @@
-// Client for the airline's reservation system (desk-pss). Reads go through a short KV cache so a
-// surge of callers asking about the same flights doesn't hammer the system of record; writes
-// (rebook, refund) go straight through. The trace id travels in x-trace-id.
+// Client for the airline's reservation system (desk-pss). Reads go through a short in-process
+// cache so a surge of callers asking about the same flights doesn't hammer the system of record;
+// writes (rebook, refund) go straight through. The trace id travels in x-trace-id.
+//
+// Not KV: measured from a function, a KV read takes 1.2-1.7 s, longer than the reservation call
+// it would save (about 300 ms). See DEBUGLOG.md.
 import { URLS } from "./endpoints";
 
 export interface PssBooking {
@@ -10,15 +13,17 @@ export interface PssBooking {
 }
 export interface PssFlight { number: string; date: string; dep: string; arr: string; origin: string; dest: string; status: string; capacity: number; sold: number }
 
+const memo = new Map<string, { at: number; ttl: number; text: string }>();
+export const clearPssMemo = () => memo.clear();
+
 export function pss(env: any, trace: string, log?: { span: (s: any) => void }) {
   const call = async <T>(path: string, init: RequestInit = {}, cacheSecs = 0): Promise<T> => {
     const t0 = Date.now();
-    const key = `cache/pss${path.replace(/[^A-Za-z0-9/=._-]/g, "_")}`;
     if (cacheSecs && init.method === undefined) {
-      const hit = await env.KV.get(key).catch(() => null);
-      if (hit) {
-        log?.span({ trace, op: "kv:pss_cache", outcome: "hit", ms: Date.now() - t0, detail: path });
-        return JSON.parse(hit) as T;
+      const hit = memo.get(path);
+      if (hit && Date.now() - hit.at < hit.ttl * 1000) {
+        log?.span({ trace, op: "mem:pss_cache", outcome: "hit", ms: Date.now() - t0, detail: path });
+        return JSON.parse(hit.text) as T;
       }
     }
     const res = await fetch(`${URLS.pss}${path}`, {
@@ -29,15 +34,16 @@ export function pss(env: any, trace: string, log?: { span: (s: any) => void }) {
     log?.span({ trace, op: `pss:${init.method ?? "GET"}`, outcome: res.ok ? "ok" : res.status === 404 ? "not_found" : "error", ms: Date.now() - t0, detail: path });
     if (res.status === 404) return null as T;
     if (!res.ok) throw new Error(`pss ${res.status} ${path}: ${text.slice(0, 200)}`);
-    if (cacheSecs && init.method === undefined) env.KV.put(key, text, { expirationTtl: cacheSecs }).catch(() => {});
+    if (cacheSecs && init.method === undefined) memo.set(path, { at: Date.now(), ttl: cacheSecs, text });
+    if (init.method !== undefined) memo.clear(); // a write may change what reads return
     return JSON.parse(text) as T;
   };
   return {
-    booking: (code: string) => call<PssBooking | null>(`/v1/bookings/${encodeURIComponent(code.toUpperCase())}`),
-    bookingByPhone: (phone: string) => call<PssBooking | null>(`/v1/bookings?phone=${encodeURIComponent(phone)}`, {}, 30),
+    booking: (code: string, cacheSecs = 0) => call<PssBooking | null>(`/v1/bookings/${encodeURIComponent(code.toUpperCase())}`, {}, cacheSecs),
+    bookingByPhone: (phone: string) => call<PssBooking | null>(`/v1/bookings?phone=${encodeURIComponent(phone)}`, {}, 20),
     flights: (origin: string, dest: string, from: string, to: string) =>
-      call<PssFlight[]>(`/v1/flights?origin=${origin}&dest=${dest}&from=${from}&to=${to}`, {}, 60),
-    flight: (number: string, date: string) => call<PssFlight | null>(`/v1/flights/${number}/${date}`, {}, 30),
+      call<PssFlight[]>(`/v1/flights?origin=${origin}&dest=${dest}&from=${from}&to=${to}`, {}, 20),
+    flight: (number: string, date: string) => call<PssFlight | null>(`/v1/flights/${number}/${date}`, {}, 20),
     rebook: (code: string, body: { flight: string; date: string; confirmation: string }) =>
       call<PssBooking>(`/v1/bookings/${code}/rebook`, { method: "POST", body: JSON.stringify(body) }),
     refund: (code: string, reason: string) => call<{ refund_ref: string }>(`/v1/bookings/${code}/refund`, { method: "POST", body: JSON.stringify({ reason }) }),
