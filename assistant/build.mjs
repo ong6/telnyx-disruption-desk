@@ -199,6 +199,17 @@ async function main() {
     console.log("number", DESK_NUMBER, "->", texmlAppId);
   }
   console.log("texml app", texmlAppId ?? "none yet (assign the number in the Portal once)");
+  // Callbacks and transfers dial Singapore numbers; the default outbound profile allows US/CA only.
+  if (texmlAppId) {
+    const app = await api("GET", `/texml_applications/${texmlAppId}`);
+    const ovp = app.outbound?.outbound_voice_profile_id;
+    if (ovp) {
+      const prof = await api("GET", `/outbound_voice_profiles/${ovp}`);
+      const want = [...new Set([...(prof.whitelisted_destinations ?? []), "SG"])];
+      if (want.length !== (prof.whitelisted_destinations ?? []).length) await api("PATCH", `/outbound_voice_profiles/${ovp}`, { whitelisted_destinations: want });
+      console.log("outbound destinations", want.join(","));
+    }
+  }
   if (texmlAppId) await kvPut("config/outbound", JSON.stringify({ texmlAppId, from: DESK_NUMBER, assistantId: main.id }));
   await kvPut("config/assistants", JSON.stringify([main.id, zh.id]));
   console.log("kv config written; default flags", DEFAULT_VARS.disruption_mode, DEFAULT_VARS.human_queue);

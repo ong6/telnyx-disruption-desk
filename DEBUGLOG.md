@@ -151,3 +151,15 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
   assistant's `n_open` and `n_incident` speak nodes again before every Mandarin Desk reply.
 - **Status.** This is a chat-channel quirk, not something the workflow controls. I'll check the
   handoff again on a web call.
+
+## 11. The waitlist callback was blocked: Singapore wasn't an allowed destination
+
+- **Test.** The Tan family booking joined the waitlist for NB866 tomorrow, and the console freed
+  one seat.
+- **The chain worked.** The Flight actor's alarm offered the four seats as a hold. The Trip actor
+  recorded the offer, and its alarm placed the outbound AI call 5 s later.
+- **Evidence.** The Trip actor's `callback.result` was `403 … "code":"10010","detail":"Dialed
+  number is not included in whitelisted countries"`. The TeXML app's outbound voice profile
+  allowed only `["US","CA"]`. That would also have blocked the human transfer to a +65 number.
+- **Fix.** `build.mjs` adds `SG` to the profile's `whitelisted_destinations`. On the trial
+  account, outbound calls still reach only the verified number.
