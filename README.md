@@ -85,14 +85,12 @@ The alarm frees the seat promptly and offers it to the waitlist.
 
 ## The conversation workflow
 
-Built as data in [`assistant/flow.mjs`](assistant/flow.mjs) and applied with
+13 nodes, built as data in [`assistant/flow.mjs`](assistant/flow.mjs) and applied with
 [`assistant/build.mjs`](assistant/build.mjs).
 
 | Node | Type | What it does | Leaves when |
 |---|---|---|---|
-| `n_open` | speak | Recording and automated-assistant disclosure, verbatim | default |
-| `n_route` | prompt (silent) | Routing only | `disruption_mode == "on"` → incident notice, else triage |
-| `n_incident` | speak | `{{incident_notice}}` from KV, verbatim | default |
+| `n_open` | speak | Recording and automated-assistant disclosure, then `{{incident_notice}}` (empty on a normal day), verbatim | default |
 | `n_triage` | prompt, append, no tools | Greets a known caller by name, says what happened to their flight, finds the need | `special_assistance == "true" && human_queue == "open"` → specialist (expression); rebook / refund / status / Mandarin (LLM) |
 | `n_rebook` | prompt, append, MCP | Verify if needed, offer at most two options, hold seats | held and confirmed → confirm; nothing fits → waitlist; prefers refund |
 | `n_confirm` | prompt, append, MCP | Confirm, read the code back letter by letter | done → wrap up; hold expired → rebook |
@@ -100,7 +98,7 @@ Built as data in [`assistant/flow.mjs`](assistant/flow.mjs) and applied with
 | `n_refund` | prompt, append, MCP | Refund, or explain why not and offer a change | done / changed mind |
 | `n_waitlist` | prompt, append, MCP | Waitlist plus automatic callback; hotel and meal voucher | done |
 | `n_faq` | prompt, append, MCP | Flight status and policy, from tools only | — |
-| `n_handoff_gate` | prompt (silent) | Routing only | `human_queue == "full"` → callback, else transfer |
+| `n_handoff_gate` | tool (`check_human_queue`) | Asks `desk-ops` whether a person is free, with no model turn | `telnyx_last_tool_status_code == 200` → transfer, default → callback |
 | `n_human`, `n_specialist` | tool (transfer) | Warm transfer; the agent hears a summary first | default → callback, only if the transfer fails |
 | `n_callback` | prompt, MCP | Book a callback from a person | done |
 | `n_wrap` | prompt, hangup tool | Anything else? Goodbye | — |
@@ -110,9 +108,13 @@ verifications (the MCP server locks verification for that call and the assistant
 after five minutes (`telnyx_conversation_duration_secs >= 300`). The confirm step is exempt from the timer, so a
 booking is never cut off halfway.
 
-**Variable comparisons vs LLM conditions.** Facts our systems already know route
-deterministically: disruption mode, special assistance, human queue and call length. Telnyx
-evaluates these before the model's turn. What the caller wants is routed by the LLM.
+**Variable comparisons vs LLM conditions.**
+- **Facts our systems already know route deterministically:** special assistance, the human queue
+  (via the gate's status code) and call length.
+- **What the caller wants is routed by the LLM.**
+- **A timing gotcha.** On a call, a prompt node's expression edges run when the caller next speaks.
+  So deterministic hops that must happen *now* use speak or tool nodes, which advance on their own
+  (DEBUGLOG #12).
 
 **Append vs replace.** Every node appends to the base prompt (persona, phone manner, "only offer
 flights a tool returned"), so those rules hold everywhere.
@@ -146,7 +148,7 @@ and the trial account caps outbound calls at 2.
 
 | Requirement | Where |
 |---|---|
-| Assistant with a multi-node Conversation Workflow, speak nodes, conditional edges | [`assistant/flow.mjs`](assistant/flow.mjs): 15 nodes (prompt, speak, tool), expression, LLM and default edges |
+| Assistant with a multi-node Conversation Workflow, speak nodes, conditional edges | [`assistant/flow.mjs`](assistant/flow.mjs): 13 nodes (prompt, speak, tool), with expression, LLM and default edges |
 | Callable by phone | +1 743 888 2787 (TeXML app assigned by `build.mjs`) |
 | Custom MCP server, at least 3 tools | `desk-mcp`: 9 tools (`verify_booking`, `get_trip_status`, `find_alternatives`, `hold_seats`, `confirm_rebooking`, `request_refund`, `join_waitlist`, `request_callback`, `get_policy`) |
 | Dynamic webhook variables from an Edge Function, influencing routing | `desk-dv`: caller ID → booking, case and flags; drives `disruption_mode`, `special_assistance` and `human_queue` edges |
@@ -159,12 +161,12 @@ and the trial account caps outbound calls at 2.
 | Stretch goal | Where |
 |---|---|
 | Multi-assistant routing | `n_triage` → *Mandarin Desk*: its own persona and prompt, a Mandarin voice and speech-to-text, and its own tool set (no refunds), with `voice_mode: distinct` |
-| Variable comparison edges | `disruption_mode`, `special_assistance && human_queue`, `human_queue`, `telnyx_conversation_duration_secs >= 300` |
+| Variable comparison edges | `special_assistance && human_queue == "open"`, `telnyx_last_tool_status_code == 200` (handoff gate), `telnyx_conversation_duration_secs >= 300` |
 | Alarms in actors | `Flight` (hold expiry, waitlist offers), `Trip` (outbound callback call), `Canary` (every minute) |
 | Object storage | Policy documents read by `get_policy`; an itinerary receipt written per rebooking (`receipts/<code>.json`) |
 | KV feature flags | Disruption mode, human queue, hold length: flipped on the console, no redeploy |
 | Shared actors | `Flight`, `Trip`, `CallSession` and `Metrics` are owned by `desk-mcp`, bound by `desk-dv` and `desk-ops` |
-| Custom variables that route | `disruption_mode`, `special_assistance`, `human_queue` |
+| Custom variables that route | `special_assistance` and `human_queue` (from the webhook) route; `incident_notice` and `caller_known` shape the opening and triage |
 | Distributed tracing | One trace ID, Telnyx's own W3C trace ID, across webhook → KV/actors → MCP → reservation system; waterfall on the console |
 
 ## Observability

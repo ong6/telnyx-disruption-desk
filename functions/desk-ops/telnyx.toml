@@ -7,6 +7,10 @@ compatibility_date = "2026-05-01"
 binding = "CANARY"
 type = "Canary"
 
+[[actors]]
+binding = "SURGE"
+type = "Surge"
+
 # Shared actors owned by desk-mcp.
 [[actors]]
 binding = "FLIGHT"

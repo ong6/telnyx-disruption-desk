@@ -2,6 +2,7 @@
 // airline ops team would have during a disruption: load a scenario, flip flags without a
 // redeploy, add a relief flight. Also the lab routes for the stampede test.
 export { Canary } from "./canary";
+export { Surge } from "./surge";
 import { readConfig, resetConfigCache, writeFlags, type Flags, type Scenario } from "../../../shared/config";
 import { URLS } from "../../../shared/endpoints";
 import { makeLogger } from "../../../shared/log";
@@ -34,6 +35,11 @@ export default {
 
     try {
       if (path === "/api/state") return json(await state(env));
+      // Read by the workflow's handoff gate (a tool node): 200 = a person can take the call.
+      if (path === "/api/queue") {
+        const { flags } = await readConfig(env);
+        return json({ queue: flags.human_queue }, flags.human_queue === "full" ? 409 : 200);
+      }
       if (path.startsWith("/api/trace/")) return json(await trace(env, path.split("/")[3]));
 
       if (!isAdmin(req, url)) return json({ error: "admin token required" }, 401);
@@ -61,6 +67,18 @@ export default {
         const r = await env.FLIGHT.idFromName(String(body.flightId)).returnSeats("SIM-RELEASE", Number(body.seats ?? 1));
         log.info("release", { flight: body.flightId, seats: body.seats ?? 1 });
         return json(r);
+      }
+      if (path === "/api/surge" && req.method === "POST") {
+        const { scenario } = await readConfig(env);
+        if (scenario?.id !== "typhoon") return json({ error: "load the typhoon scenario first" }, 409);
+        const callers = Math.min(Number(body.callers ?? 200), 500);
+        const sim = await pssFetch("/v1/admin/synthetic", { method: "POST", body: JSON.stringify({ count: callers, baseDate: scenario.baseDate }) });
+        const flightOf = (i: number) => sim.flights[(i + 1) % sim.flights.length].split("-");
+        await Promise.all(sim.codes.map((c: { code: string; pax: number }, i: number) =>
+          env.TRIP.idFromName(c.code).init({ code: c.code, firstName: "Sim", lastName: `Passenger${i + 1}`, phone: "", pax: c.pax, flight: flightOf(i)[0], day: 0, tier: "none" }, scenario.baseDate)));
+        const started = await env.SURGE.idFromName("main").start(sim.codes.map((c: { code: string }) => c.code), Number(body.seconds ?? 30), flightId("NB862", addDays(scenario.baseDate, 1)));
+        log.info("surge", { callers, seconds: body.seconds ?? 30 });
+        return json({ total: started.total, perWave: started.perWave });
       }
       if (path === "/api/canary" && req.method === "POST") return json(await env.CANARY.idFromName("main")[body.run === false ? "stop" : "start"]());
       if (path === "/api/metrics/reset" && req.method === "POST") return json(await env.METRICS.idFromName("global").reset());
@@ -145,10 +163,11 @@ async function state(env: any) {
     ...["NB862", "NB866", "NB868"].flatMap((n) => [0, 1, 2].map((d) => flightId(n, addDays(base, d)))),
     flightId(RELIEF_FLIGHT.number, addDays(base, RELIEF_FLIGHT.day)),
   ])];
-  const [flights, metrics, canary] = await Promise.all([
+  const [flights, metrics, canary, surge] = await Promise.all([
     Promise.all(ids.map((id) => env.FLIGHT.idFromName(id).snapshot().catch(() => null))),
     env.METRICS.idFromName("global").summary(15),
     env.CANARY.idFromName("main").runs(),
+    env.SURGE.idFromName("main").state().catch(() => null),
   ]);
   const trips = await Promise.all(BOOKINGS.map((b) => env.TRIP.idFromName(b.code).get().catch(() => null)));
   const callbacks = (metrics.callbacks ?? []).map((c: any) => ({ ...c, caller: maskPhone(c.caller) }));
@@ -164,6 +183,7 @@ async function state(env: any) {
     callbacks,
     metrics,
     canary,
+    surge,
   };
 }
 

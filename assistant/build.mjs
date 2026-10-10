@@ -111,6 +111,12 @@ async function main() {
     },
   };
   const hangupBody = { type: "hangup", display_name: "hangup", hangup: { description: "End the call after saying goodbye." } };
+  // The handoff gate's check: desk-ops answers 200 when a person can take the call, 409 when full.
+  const queueBody = {
+    type: "webhook", display_name: "check_human_queue", timeout_ms: 4000,
+    webhook: { name: "check_human_queue", description: "Whether a person is free to take a transfer.", url: "https://desk-ops-68bad318-0.telnyxcompute.com/api/queue", method: "GET" },
+  };
+  const queue = await upsertByName("/ai/tools", "/ai/tools", { method: "PATCH", path: (id) => `/ai/tools/${id}` }, queueBody.display_name, queueBody, "display_name");
   const transfer = await upsertByName("/ai/tools", "/ai/tools", { method: "PATCH", path: (id) => `/ai/tools/${id}` }, transferBody.display_name, transferBody, "display_name");
   const hangup = await upsertByName("/ai/tools", "/ai/tools", { method: "PATCH", path: (id) => `/ai/tools/${id}` }, hangupBody.display_name, hangupBody, "display_name");
   console.log("tools", transfer.id, hangup.id);
@@ -134,7 +140,7 @@ async function main() {
   console.log("mandarin desk", zh.id);
 
   // 4. Main assistant with the workflow.
-  const { flow, scope } = buildFlow({ transferToolId: transfer.id, hangupToolId: hangup.id, mandarinAssistantId: zh.id });
+  const { flow, scope } = buildFlow({ transferToolId: transfer.id, hangupToolId: hangup.id, queueToolId: queue.id, mandarinAssistantId: zh.id });
   // Only shared tools can be scoped per node; MCP tools stay available on every node whatever
   // the tools_mode (DEBUGLOG #4). So the MCP server enforces the business rules itself (no
   // confirm without a live hold, no change without a verified booking).

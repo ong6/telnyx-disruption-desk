@@ -49,6 +49,26 @@ async function route(req: Request, url: URL, env: any): Promise<Response> {
   const body = req.method === "POST" ? ((await req.json().catch(() => ({}))) as any) : {};
 
   if (url.pathname === "/v1/admin/reset" && req.method === "POST") return json(await reset(db, body));
+  // Synthetic passengers for the surge simulation: SIM0001... on today's cancelled flights.
+  if (url.pathname === "/v1/admin/synthetic" && req.method === "POST") {
+    const count = Math.min(Number(body.count ?? 200), 1000);
+    const cancelled: any[] = (await db.prepare("SELECT number, date FROM flights WHERE status = 'cancelled' AND date = ?").bind(body.baseDate).all()).results;
+    if (!cancelled.length) return json({ error: "load the typhoon scenario first" }, 409);
+    const stmts = [db.prepare("DELETE FROM bookings WHERE code LIKE 'SIM%'")];
+    const codes: { code: string; pax: number }[] = [];
+    for (let i = 1; i <= count; i++) {
+      const code = `SIM${String(i).padStart(3, "0")}`;
+      const pax = 1 + (i % 3);
+      const f = cancelled[i % cancelled.length];
+      codes.push({ code, pax });
+      stmts.push(
+        db.prepare("INSERT INTO bookings (code, first_name, last_name, phone, pax, flight, date, tier, assistance, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+          .bind(code, "Sim", `Passenger${i}`, "", pax, f.number, f.date, "none", null, Date.now()),
+      );
+    }
+    await db.batch(stmts);
+    return json({ created: codes.length, codes, flights: cancelled.map((f) => `${f.number}-${f.date}`) });
+  }
   if (url.pathname === "/v1/admin/flights" && req.method === "POST") {
     const f: FlightDef = { ...RELIEF_FLIGHT, ...body.flight };
     const date = addDays(body.baseDate, f.day);

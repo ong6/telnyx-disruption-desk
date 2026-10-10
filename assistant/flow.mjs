@@ -17,11 +17,12 @@ const prompt = (id, name, instructions) => ({ id, name, type: "prompt", instruct
 const speak = (id, name, message) => ({ id, name, type: "speak", message });
 const tool = (id, name, shared_tool_id, message) => ({ id, name, type: "tool", shared_tool_id, message });
 
-export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId }) {
+export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinAssistantId }) {
   const nodes = [
-    speak("n_open", "Disclosure", "Thanks for calling Nimbus Air. This call may be recorded for quality and training, and you're speaking with our automated assistant. You can ask for a person at any time."),
-    prompt("n_route", "Route opening", "Routing step: say nothing here."),
-    speak("n_incident", "Incident notice", "{{incident_notice}}"),
+    // One verbatim opening. On a call, a prompt node's expression edges only run when the caller
+    // next speaks, so a silent routing node leaves dead air (DEBUGLOG #12). The incident notice is
+    // a variable instead: empty on a normal day, the typhoon notice in disruption mode.
+    speak("n_open", "Disclosure and incident notice", "Thanks for calling Nimbus Air. This call may be recorded for quality and training, and you're speaking with our automated assistant. You can ask for a person at any time. {{incident_notice}}"),
     prompt("n_triage", "Greet & identify need", [
       "Open the conversation and find out what the caller needs.",
       "Keep this first turn to two short sentences and one question. Don't repeat the incident notice; the caller just heard it.",
@@ -56,26 +57,26 @@ export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId })
       "Answer questions about the caller's flight with get_trip_status (verify unknown callers first with verify_booking), and policy questions only from get_policy.",
       "Keep answers to two or three sentences.",
     ].join("\n")),
-    prompt("n_handoff_gate", "Human handoff gate", "Routing step: say nothing here."),
+    // A tool node runs immediately, with no model turn: it asks desk-ops whether a person is free
+    // and routes on the HTTP status (200 = transfer, anything else = callback).
+    tool("n_handoff_gate", "Human handoff gate", queueToolId, "One moment, let me get a colleague for you."),
     tool("n_human", "Transfer to agent", transferToolId, "I'm connecting you with a member of our team now, and I'll pass on what we've discussed."),
     tool("n_specialist", "Special assistance transfer", transferToolId, "I can see your booking includes special assistance, so I'm connecting you with a specialist who can arrange everything for you."),
     prompt("n_callback", "Callback offer", [
       "Our team can't take a transfer right now. Apologise briefly and offer a callback from a person within two hours.",
-      "If they accept, call request_callback with a one-line reason for the agent. Then confirm it's booked.",
+      "If they accept, call request_callback with a one-line reason for the agent (set transfer_failed to true if a transfer was just attempted). Then confirm it's booked.",
     ].join("\n")),
     prompt("n_wrap", "Wrap up", "Ask if there's anything else. If there isn't, thank them, wish them a safe trip, and end the call with the hangup tool."),
   ];
 
   // Tools per prompt node (MCP tools are listed by name; build.mjs maps them to the node).
   const scope = {
-    n_route: [],
     n_triage: [],
     n_rebook: ["verify_booking", "find_alternatives", "hold_seats"],
     n_confirm: ["confirm_rebooking"],
     n_refund: ["verify_booking", "request_refund"],
     n_waitlist: ["find_alternatives", "join_waitlist"],
     n_faq: ["verify_booking", "get_trip_status", "get_policy"],
-    n_handoff_gate: [],
     n_callback: ["request_callback"],
     n_wrap: [],
   };
@@ -84,12 +85,7 @@ export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId })
   const edges = [];
   const edge = (from, to, condition) => edges.push({ id: `e${++i}_${from}_${to}`.slice(0, 60), start_node_id: from, target: to.startsWith("assistant:") ? { type: "assistant", assistant_id: to.slice(10), voice_mode: "distinct" } : { type: "node", node_id: to }, condition });
 
-  // Opening: the incident notice plays only when disruption mode is on (flag in KV, via the
-  // webhook). A speak node always follows its one default edge, so a silent prompt node routes.
-  edge("n_open", "n_route", DEFAULT);
-  edge("n_route", "n_incident", expr(cmp("==", v("disruption_mode"), s("on"))));
-  edge("n_route", "n_triage", expr(cmp("!=", v("disruption_mode"), s("on"))));
-  edge("n_incident", "n_triage", DEFAULT);
+  edge("n_open", "n_triage", DEFAULT);
 
   // Hard rules first: these run before the model's turn.
   edge("n_triage", "n_specialist", expr(and(cmp("==", v("special_assistance"), s("true")), cmp("==", v("human_queue"), s("open")))));
@@ -119,9 +115,10 @@ export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId })
     if (node !== "n_confirm") edge(node, "n_handoff_gate", expr(cmp(">=", v("telnyx_conversation_duration_secs"), n(300))));
     edge(node, "n_handoff_gate", llm("The caller asks for a person, an agent or a supervisor, or is very upset, or you told the caller you're connecting them with a colleague."));
   }
-  // The gate decides deterministically: transfer if the desk can take it, otherwise a callback.
-  edge("n_handoff_gate", "n_callback", expr(cmp("==", v("human_queue"), s("full"))));
-  edge("n_handoff_gate", "n_human", expr(cmp("!=", v("human_queue"), s("full"))));
+  // The gate decides deterministically on the queue check's status code: "200" on calls, 200 in chat.
+  const ok = { type: "bool_op", op: "or", operands: [cmp("==", v("telnyx_last_tool_status_code"), s("200")), cmp("==", v("telnyx_last_tool_status_code"), n(200))] };
+  edge("n_handoff_gate", "n_human", expr(ok));
+  edge("n_handoff_gate", "n_callback", DEFAULT);
   edge("n_human", "n_callback", DEFAULT); // only used if the transfer fails
   edge("n_specialist", "n_callback", DEFAULT);
 

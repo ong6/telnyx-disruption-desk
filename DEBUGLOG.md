@@ -171,3 +171,31 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
   allowed only `["US","CA"]`. That would also have blocked the human transfer to a +65 number.
 - **Fix.** `build.mjs` adds `SG` to the profile's `whitelisted_destinations`. On the trial
   account, outbound calls still reach only the verified number.
+
+## 12. Asking for a person on a real call led to silence
+
+- **Symptom.** On the first phone call the caller said "Can I get a representative on the line?"
+  twice. The transcript shows the typhoon notice playing only after the first request, then
+  `[long silence]`, twice.
+- **Cause.** My silent routing nodes (`n_route` after the disclosure, `n_handoff_gate` before the
+  transfer) were prompt nodes told to "say nothing", with expression edges. On a call those edges
+  are checked when the caller next speaks, not when the node is entered. So the call parked at a
+  node that said nothing, and the caller waited for the system. In chat the next user message
+  arrives immediately, which hid the problem in every test so far.
+- **Fix.**
+  - The opening is one speak node: the disclosure plus `{{incident_notice}}`.
+  - The handoff gate is a **tool node** calling `check_human_queue` on `desk-ops`. Tool nodes run
+    immediately, with no model turn.
+  - It routes on `telnyx_last_tool_status_code`: 200 → transfer, otherwise → callback.
+
+## 13. Asked for a person, the assistant booked a callback and then transferred
+
+- **Evidence.** In a chat test ("I want to speak to a real person"), the triage turn called
+  `request_callback` (an MCP tool) and said a callback was set up. Then the LLM edge fired, the
+  handoff gate's tool node returned `{"queue":"open"}`, and the transfer node ran. The caller got
+  both.
+- **Cause.** MCP tools are callable from every node (#4), so the model can reach for one that
+  belongs to a later step.
+- **Fix.** The rule lives in the server. `request_callback` is refused while a person is free
+  (`human_queue` open), unless the caller says a transfer has just failed. The model is told to
+  route instead.

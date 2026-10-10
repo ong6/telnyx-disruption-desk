@@ -226,8 +226,20 @@ export const TOOLS: Record<string, Tool> = {
   request_callback: {
     description:
       "Book a callback from a person when the human desk is too busy for a transfer, or the caller prefers to be called back. Uses the number on the booking, or the number they called from.",
-    inputSchema: { type: "object", properties: { reason: { type: "string", description: "one line for the agent who calls back" } }, required: ["reason"] },
-    async run(ctx, { reason }) {
+    inputSchema: {
+      type: "object",
+      properties: {
+        reason: { type: "string", description: "one line for the agent who calls back" },
+        transfer_failed: { type: "boolean", description: "true only if a transfer to a person was just tried and failed" },
+      },
+      required: ["reason"],
+    },
+    async run(ctx, { reason, transfer_failed }) {
+      // MCP tools are callable from any node, so the rule lives here: while a person is free,
+      // the caller is transferred, not parked on a callback.
+      const { flags } = (await readConfigFast(ctx.env, 300)) ?? { flags: { human_queue: "open" } };
+      if (flags.human_queue !== "full" && !transfer_failed)
+        return { booked: false, reason: "agents_available", next: "a person is free: tell the caller you're connecting them now" };
       const code = await sessionBooking(ctx);
       if (code) await trip(ctx, code).escalated(String(reason ?? "callback requested"));
       const entry = { at: Date.now(), trace: ctx.claims.trace, booking: code, caller: ctx.claims.caller, reason: String(reason ?? "") };

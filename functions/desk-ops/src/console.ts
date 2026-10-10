@@ -26,6 +26,10 @@ button,input,select{font:600 12px var(--mono);background:#1d242e;color:var(--ink
 button:hover{border-color:var(--amber)}button.danger{border-color:#5a2a27}input{cursor:text;width:100%}
 .controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.controls+.controls{margin-top:8px}
 .mut{color:var(--dim)}a{color:var(--blue);cursor:pointer;text-decoration:none}
+.trunc{max-width:260px;overflow:hidden;text-overflow:ellipsis}
+.help{font-size:12px;color:var(--dim);margin:6px 0 2px;line-height:1.5}.help b{color:var(--ink);font-weight:600}
+.surge{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:8px}.surge div{background:#10141a;border:1px solid var(--line);border-radius:4px;padding:8px}.surge b{display:block;font:600 18px var(--mono)}.surge span{font-size:11px;color:var(--dim)}
+.prog{height:6px;background:#222a35;border-radius:3px;overflow:hidden;margin-top:8px}.prog i{display:block;height:100%;background:var(--green)}
 .wf{position:relative;height:22px;margin:3px 0;font:12px var(--mono)}.wf i{position:absolute;top:3px;height:16px;border-radius:2px;background:var(--blue);opacity:.85}
 .wf i.error{background:var(--red)}.wf i.hit{background:var(--green)}.wf span{position:absolute;left:0;top:2px;white-space:nowrap;color:var(--ink);text-shadow:0 0 4px #000}
 .spark{display:flex;gap:2px;align-items:flex-end;height:20px}.spark i{width:5px;background:var(--green);border-radius:1px}.spark i.bad{background:var(--red)}
@@ -41,12 +45,16 @@ button:hover{border-color:var(--amber)}button.danger{border-color:#5a2a27}input{
 </section>
 <div class="kpis" id="kpis"></div>
 <section class="board"><h2>Departures · Singapore → Hong Kong</h2><table><thead><tr><th>Flight</th><th>Date</th><th>Dep</th><th>Status</th><th>Seats left</th><th>Held</th><th>Waitlist</th><th></th><th></th></tr></thead><tbody id="flights"></tbody></table></section>
-<section class="side"><h2>Controls</h2>
-<div class="controls"><input id="key" type="password" placeholder="admin token (stored in this browser)"></div>
-<div class="controls"><button onclick="act('/api/scenario',{id:'normal'})">Normal day</button><button class="danger" onclick="act('/api/scenario',{id:'typhoon'})">Typhoon hits HKG</button><button onclick="act('/api/relief',{})">+ Relief flight NB870</button></div>
-<div class="controls"><button onclick="flag('disruption_mode')">Toggle disruption flag</button><button onclick="flag('human_queue')">Toggle human queue</button><button onclick="flag('web_calls_as_demo_caller')">Toggle web calls as demo caller</button>
-<select id="ttl" onchange="act('/api/flags',{hold_ttl_secs:Number(this.value)})"><option value="600">hold 10 min</option><option value="120">hold 2 min</option><option value="45">hold 45 s</option></select></div>
-<div class="controls"><button onclick="act('/api/canary',{run:true})">Start canary</button><button onclick="act('/api/canary',{run:false})">Stop canary</button><button onclick="act('/api/metrics/reset',{})">Reset counters</button></div>
+<section class="side"><h2>Scenario</h2>
+<div class="controls"><button onclick="act('/api/scenario',{id:'normal'})" title="All flights on time; FAQs and voluntary changes">Normal day</button><button class="danger" onclick="influx()" title="Typhoon cancels today's Hong Kong flights, then 200 simulated passengers call to rebook over 30 s">Influx day: typhoon + 200 callers</button></div>
+<div id="surgebox" class="mut" style="font:12px var(--mono);margin-top:6px">No surge run yet.</div>
+<div id="lock" class="help"></div>
+<details style="margin-top:10px"><summary class="help" style="cursor:pointer">Advanced (for the walkthrough)</summary>
+<div class="help"><b>Human queue full</b>: callers asking for a person get a callback offer instead of a transfer. <b>Relief flight</b>: ops adds a 300-seat NB870 tomorrow. <b>Hold length</b>: how long a held seat waits for a yes (45 s shows expiry live). <b>Web calls as Jun</b>: browser calls are recognised as the demo passenger. <b>free 1</b> on the board frees a seat so a waitlisted passenger gets a callback.</div>
+<div class="controls"><button onclick="flag('human_queue')">Toggle human queue</button><button onclick="act('/api/relief',{})">+ Relief flight NB870</button>
+<select id="ttl" onchange="act('/api/flags',{hold_ttl_secs:Number(this.value)})"><option value="600">hold 10 min</option><option value="120">hold 2 min</option><option value="45">hold 45 s</option></select>
+<button onclick="flag('web_calls_as_demo_caller')">Toggle web calls as Jun</button><button onclick="act('/api/metrics/reset',{})">Reset counters</button></div>
+</details>
 <h2 style="margin-top:16px">Canary · last 30 minutes</h2><div class="spark" id="spark"></div><div class="mut" id="canarytxt" style="font:12px var(--mono);margin-top:6px"></div>
 <h2 style="margin-top:16px">Latency p50 / p95 (15 min)</h2><table><tbody id="lat"></tbody></table></section>
 <section class="board"><h2>Recent calls</h2><table><thead><tr><th>Trace</th><th>Started</th><th>Caller</th><th>Booking</th><th>Last step</th><th>Outcome</th></tr></thead><tbody id="calls"></tbody></table></section>
@@ -56,12 +64,13 @@ button:hover{border-color:var(--amber)}button.danger{border-color:#5a2a27}input{
 </main><div id="toast"></div>
 <script async src="https://unpkg.com/@telnyx/ai-agent-widget@0.36.0"></script>
 <script>
-const $=id=>document.getElementById(id);const keyEl=$('key');try{keyEl.value=localStorage.getItem('desk-key')||''}catch(e){}
-keyEl.onchange=()=>{try{localStorage.setItem('desk-key',keyEl.value)}catch(e){}};
+const $=id=>document.getElementById(id);let KEY='';
+try{const m=location.hash.match(/key=([^&]+)/);if(m){localStorage.setItem('desk-key',decodeURIComponent(m[1]));history.replaceState(null,'',location.pathname)}KEY=localStorage.getItem('desk-key')||''}catch(e){}
 let S=null;const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ago=t=>{const s=Math.round((Date.now()-t)/1000);return s<60?s+'s ago':Math.round(s/60)+'m ago'};
 function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',3500)}
-async function act(path,body){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+keyEl.value},body:JSON.stringify(body)});const j=await r.json();toast(r.ok?'done: '+path:'error: '+(j.error||r.status));load()}
+async function influx(){await act('/api/scenario',{id:'typhoon'});await act('/api/surge',{callers:200,seconds:30})}
+async function act(path,body){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+KEY},body:JSON.stringify(body)});const j=await r.json();toast(r.ok?'done: '+path:r.status===401?'Read-only view: controls are unlocked only in the operator\'s browser':'error: '+(j.error||r.status));load()}
 function flag(name){const cur=S?.flags?.[name];const next=name==='human_queue'?(cur==='full'?'open':'full'):(cur==='on'?'off':'on');act('/api/flags',{[name]:next})}
 function sum(c,pred){return Object.entries(c).filter(([k])=>pred(k)).reduce((n,[,v])=>n+v,0)}
 function render(s){S=s;const f=s.flags;
@@ -79,11 +88,14 @@ $('kpis').innerHTML=k.map(([l,v])=>'<div class="kpi"><b'+(l.startsWith('Tool err
 $('flights').innerHTML=s.flights.map(x=>{const pct=x.capacity?Math.round(100*(x.capacity-x.seatsLeft)/x.capacity):0;return '<tr><td>'+x.number+'</td><td>'+x.date.slice(5)+'</td><td>'+x.dep+'</td><td class="'+x.status+'">'+x.status.toUpperCase()+'</td><td>'+x.seatsLeft+'</td><td>'+x.held+'</td><td>'+x.waitlist+'</td><td><div class="bar"><i style="width:'+pct+'%"></i></div></td><td>'+(x.status!=='cancelled'?'<a title="simulate another passenger freeing a seat" onclick="act(\\'/api/release\\',{flightId:\\''+x.id+'\\',seats:1})">free 1</a>':'')+'</td></tr>'}).join('');
 $('lat').innerHTML=Object.entries(s.metrics.latency).sort().map(([k,v])=>'<tr><td>'+esc(k)+'</td><td>'+v.p50+' / '+v.p95+' ms</td><td class="mut">n='+v.n+'</td></tr>').join('')||'<tr><td class="mut">no traffic yet</td></tr>';
 $('calls').innerHTML=s.metrics.calls.map(r=>'<tr><td><a onclick="showTrace(\\''+r.trace+'\\')">'+r.trace+'</a></td><td>'+ago(r.at)+'</td><td>'+esc(r.caller||'web')+'</td><td>'+esc(r.booking||'—')+'</td><td>'+esc(r.last)+'</td><td>'+esc(r.outcome)+'</td></tr>').join('')||'<tr><td class="mut" colspan=6>no calls yet</td></tr>';
-$('trips').innerHTML=s.trips.map(t=>{const d=t.rebookedTo?t.rebookedTo.flightId+' · '+t.rebookedTo.confirmation:t.hold&&t.hold.expiresAt>Date.now()?'holding '+t.hold.flightId+' · '+Math.round((t.hold.expiresAt-Date.now())/1000)+'s':t.refund?t.refund.reference:t.waitlist?'waitlist '+t.waitlist.flightId+(t.callback?' · callback '+(t.callback.placedAt?'placed '+esc(t.callback.result):'due'):''):'';return '<tr><td>'+t.code+'</td><td>'+t.pax+'</td><td>'+t.status+'</td><td class="mut">'+esc(d)+'</td></tr>'}).join('');}
-function renderCbs(s){$('cbs').innerHTML=(s.callbacks||[]).map(c=>'<tr><td>'+ago(c.at)+'</td><td>'+esc(c.booking||c.caller||'unknown')+'</td><td class="mut">'+esc(c.reason)+'</td><td><a onclick="showTrace(\\''+c.trace+'\\')">trace</a></td></tr>').join('')||'<tr><td class="mut">empty</td></tr>'}
+$('trips').innerHTML=s.trips.map(t=>{const d=t.rebookedTo?t.rebookedTo.flightId+' · '+t.rebookedTo.confirmation:t.hold&&t.hold.expiresAt>Date.now()?'holding '+t.hold.flightId+' · '+Math.round((t.hold.expiresAt-Date.now())/1000)+'s':t.refund?t.refund.reference:t.waitlist?'waitlist '+t.waitlist.flightId+(t.callback?' · callback '+(t.callback.placedAt?'placed '+esc(t.callback.result):'due'):''):'';return '<tr><td>'+t.code+'</td><td>'+t.pax+'</td><td>'+t.status+'</td><td class="mut trunc" title="'+esc(d)+'">'+esc(d)+'</td></tr>'}).join('');}
+function renderLock(){$('lock').textContent=KEY?'Controls unlocked in this browser.':'Read-only view. Controls work only in the operator\'s browser.'}
+function renderSurge(s){const g=s.surge;if(!g){return}const pct=g.total?Math.round(100*g.done/g.total):0;const el=((g.finishedAt||Date.now())-g.startedAt)/1000;
+$('surgebox').innerHTML=(g.running?'Surge running':'Last surge')+': '+g.done+' / '+g.total+' passengers in '+el.toFixed(0)+' s ('+(g.done/Math.max(1,el)).toFixed(1)+'/s)'+'<div class="prog"><i style="width:'+pct+'%"></i></div><div class="surge"><div><b>'+g.rebooked+'</b><span>rebooked</span></div><div><b>'+g.waitlisted+'</b><span>waitlisted + callback</span></div><div><b>'+g.raceLost+'</b><span>seat races lost, retried</span></div><div><b>'+g.errors+'</b><span>errors</span></div><div><b>'+g.p50+' / '+g.p95+'</b><span>ms per passenger p50 / p95</span></div></div>'}
+function renderCbs(s){$('cbs').innerHTML=(s.callbacks||[]).map(c=>'<tr><td>'+ago(c.at)+'</td><td>'+esc(c.booking||c.caller||'unknown')+'</td><td class="mut trunc" title="'+esc(c.reason)+'">'+esc(c.reason)+'</td><td><a onclick="showTrace(\\''+c.trace+'\\')">trace</a></td></tr>').join('')||'<tr><td class="mut">empty</td></tr>'}
 async function showTrace(id){$('tid').textContent=id;const r=await (await fetch('/api/trace/'+id)).json();const sp=r.spans||[];if(!sp.length){$('trace').textContent='no spans yet';return}
 const t0=Math.min(...sp.map(x=>x.at-x.ms)),t1=Math.max(...sp.map(x=>x.at)),W=Math.max(1,t1-t0);
 $('trace').innerHTML=sp.map(x=>{const l=100*(x.at-x.ms-t0)/W,w=Math.max(.6,100*x.ms/W);const cls=x.outcome==='error'?'error':x.outcome==='hit'?'hit':'';return '<div class="wf"><i class="'+cls+'" style="left:'+l+'%;width:'+w+'%"></i><span>+'+(x.at-x.ms-t0)+'ms '+esc(x.svc)+' '+esc(x.op)+' · '+esc(x.outcome)+' · '+x.ms+'ms '+esc(x.detail||'')+'</span></div>'}).join('')}
-async function load(){try{const s=await (await fetch('/api/state',{cache:'no-store'})).json();render(s);renderCbs(s)}catch(e){}}
+async function load(){try{const s=await (await fetch('/api/state',{cache:'no-store'})).json();render(s);renderCbs(s);renderSurge(s);renderLock()}catch(e){}}
 load();setInterval(load,3000);
 </script></body></html>`;
