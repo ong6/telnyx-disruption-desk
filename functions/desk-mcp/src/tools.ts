@@ -177,7 +177,10 @@ export const TOOLS: Record<string, Tool> = {
       await trip(ctx, b.code).rebooked(target.id, confirmation);
       const receipt = { confirmation, booking: b.code, passenger: `${b.first_name} ${b.last_name}`, pax: b.pax, flight: target, ticketing, at: new Date().toISOString(), trace: ctx.claims.trace };
       ctx.env.DOCS?.put(`receipts/${confirmation}.json`, JSON.stringify(receipt, null, 2), { httpMetadata: { contentType: "application/json" } }).catch(() => {});
-      return { confirmed: true, confirmation_code: confirmation, spelled: spell(confirmation), flight: describeFlight(target), passengers: b.pax, ticketing };
+      return {
+        confirmed: true, confirmation_code: confirmation, spelled: spell(confirmation), flight: describeFlight(target), passengers: b.pax, ticketing,
+        say: `You're confirmed on ${describeFlight(target)}. Your new confirmation code is ${spell(confirmation)}.`,
+      };
     },
   },
 
@@ -194,7 +197,10 @@ export const TOOLS: Record<string, Tool> = {
       if (t?.hold) await flight(ctx, t.hold.flightId).release(t.hold.holdId);
       const { refund_ref } = await pss(ctx.env, ctx.claims.trace, ctx.log).refund(b.code, String(reason ?? "flight disrupted"));
       await trip(ctx, b.code).refunded(refund_ref);
-      return { refunded: true, refund_reference: refund_ref, spelled: spell(refund_ref), timeline: "back on the original card within 7 business days" };
+      return {
+        refunded: true, refund_reference: refund_ref, spelled: spell(refund_ref), timeline: "back on the original card within 7 business days",
+        say: `Your refund is done. The reference is ${spell(refund_ref)}. The money will be back on your original card within 7 business days.`,
+      };
     },
   },
 
@@ -212,6 +218,7 @@ export const TOOLS: Record<string, Tool> = {
       return {
         waitlisted: true, position: r.position, callback: "we'll call the number on the booking as soon as seats free up",
         voucher: voucher ? { code: voucher, spelled: spell(voucher), covers: "one night's hotel near the airport and meals, up to 150 Singapore dollars per person" } : null,
+        say: `You're number ${r.position} on the waitlist. If seats free up, we'll hold them and call you straight back.${voucher ? ` Your hotel and meal voucher code is ${spell(voucher)}, worth up to 150 Singapore dollars per person.` : ""}`,
       };
     },
   },

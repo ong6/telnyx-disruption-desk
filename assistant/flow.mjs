@@ -113,11 +113,6 @@ export function buildFlow({ transferToolId, hangupToolId, mandarinAssistantId })
   edge("n_faq", "n_wrap", llm("The caller's question is answered and they need nothing else."));
   edge("n_callback", "n_wrap", llm("The callback is booked, or the caller declined it."));
 
-  // Three failed verifications: verify_booking stores attempts_left as a variable, so this is a
-  // deterministic variable comparison, not something the model has to notice.
-  const lockedOut = { type: "bool_op", op: "or", operands: [cmp("==", v("verify_attempts_left"), n(0)), cmp("==", v("verify_attempts_left"), s("0"))] };
-  for (const node of ["n_rebook", "n_refund", "n_faq"]) edges.unshift({ id: `e0_${node}_locked`, start_node_id: node, target: { type: "node", node_id: "n_handoff_gate" }, condition: expr(lockedOut) });
-
   // Every conversational node can reach a person: on request, after 3 failed verifications, or
   // after 5 minutes. The confirm step is exempt from the timer so a booking is never cut off.
   for (const node of ["n_triage", "n_rebook", "n_confirm", "n_refund", "n_waitlist", "n_faq", "n_wrap"]) {

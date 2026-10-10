@@ -25,7 +25,8 @@ const PHONE_MANNER = { name: "Phone manner", criteria: "Short turns, one questio
 const TESTS = [
   {
     name: "Cancelled flight: verify, rebook, confirm",
-    instructions: "You are Priya Raman. Your Nimbus Air flight from Singapore to Hong Kong today was cancelled because of the typhoon. You are travelling with one other person. Your booking code is R2D5VK and your last name is Raman. Ask to move to the earliest flight that works, accept the first option offered, and confirm it when asked. Write down the confirmation code.",
+    // Each test uses its own booking: the suite runs tests in parallel against shared state.
+    instructions: "You are Jun Ong. Your Nimbus Air flight from Singapore to Hong Kong today was cancelled because of the typhoon. Your booking code is K7Q2ZX and your last name is Ong. Ask to move to the earliest flight that works, accept the first option offered, and say yes clearly when asked to confirm. Write down the confirmation code.",
     rubric: [
       { name: "Verifies first", criteria: "Asks for the booking code and last name before changing anything." },
       { name: "Holds then confirms", criteria: "Holds seats on the chosen flight, reads back the flight, date, time and passengers, and asks for a clear yes before confirming." },

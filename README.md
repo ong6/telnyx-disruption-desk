@@ -106,8 +106,8 @@ Built as data in [`assistant/flow.mjs`](assistant/flow.mjs) and applied with
 | `n_wrap` | prompt, hangup tool | Anything else? Goodbye | — |
 
 Every conversational node can reach a person: when the caller asks (LLM), after three failed
-verifications (LLM, on the tool's `attempts_left: 0`), or after five minutes
-(`telnyx_conversation_duration_secs >= 300`). The confirm step is exempt from the timer, so a
+verifications (the MCP server locks verification for that call and the assistant hands over), or
+after five minutes (`telnyx_conversation_duration_secs >= 300`). The confirm step is exempt from the timer, so a
 booking is never cut off halfway.
 
 **Variable comparisons vs LLM conditions.** Facts our systems already know route
@@ -118,9 +118,9 @@ evaluates these before the model's turn. What the caller wants is routed by the 
 flights a tool returned"), so those rules hold everywhere.
 
 **Tool scoping.**
-- **Shared tools are scoped per node.** `verify_booking` exists only on rebook, refund and status;
-  `hangup` only on wrap-up. Transfer is reachable only through the tool nodes behind the handoff
-  gate, so the model can't transfer around the human-queue check.
+- **Shared tools are scoped per node.** `hangup` exists only on wrap-up. Transfer is reachable
+  only through the tool nodes behind the handoff gate, so the model can't transfer around the
+  human-queue check.
 - **MCP tools are assistant-wide on Telnyx.** Node tool modes don't remove them (DEBUGLOG #4), so
   the MCP server enforces the business rules itself: no confirm without a live hold, no change
   without a verified booking, no refund unless the flight was disrupted.
@@ -148,7 +148,7 @@ and the trial account caps outbound calls at 2.
 |---|---|
 | Assistant with a multi-node Conversation Workflow, speak nodes, conditional edges | [`assistant/flow.mjs`](assistant/flow.mjs): 15 nodes (prompt, speak, tool), expression, LLM and default edges |
 | Callable by phone | +1 743 888 2787 (TeXML app assigned by `build.mjs`) |
-| Custom MCP server, at least 3 tools | `desk-mcp`: 9 tools (`lookup_booking`, `get_trip_status`, `find_alternatives`, `hold_seats`, `confirm_rebooking`, `request_refund`, `join_waitlist`, `request_callback`, `get_policy`) |
+| Custom MCP server, at least 3 tools | `desk-mcp`: 9 tools (`verify_booking`, `get_trip_status`, `find_alternatives`, `hold_seats`, `confirm_rebooking`, `request_refund`, `join_waitlist`, `request_callback`, `get_policy`) |
 | Dynamic webhook variables from an Edge Function, influencing routing | `desk-dv`: caller ID → booking, case and flags; drives `disruption_mode`, `special_assistance` and `human_queue` edges |
 | Edge Functions, `telnyx-edge ship` | `functions/desk-{dv,mcp,ops,pss}` |
 | KV | Flags and active scenario, trace spans, outbound-call config |

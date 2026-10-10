@@ -141,9 +141,17 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
   and `{{telnyx_end_user_target}}` arrived as literal text. There was no `traceparent` at all.
 - **Cause.** In chat the webhook runs lazily (#6), and tool templates resolve against the
   assistant's defaults.
-- **Status.** On a call the webhook runs at setup, so `{{trace_id}}` should resolve. That is
-  still unverified and is in the live-call checklist. The lockout's routing itself is
-  deterministic: `verify_booking` stores `attempts_left` and an expression edge routes on it.
+- **Consequence.** I had made `verify_booking` a webhook tool, so it could store `attempts_left`
+  as a variable for a deterministic expression edge. In chat it bound each successful
+  verification to a throwaway trace. The scenario suite regressed: refund, family and rebook
+  all failed with `not_verified` after a correct verification (conversation `59c341b5`).
+- **Fix.**
+  - Verification is back in the MCP server, which finds the call through the traceparent link
+    in both chat and calls.
+  - The lockout is enforced server-side: after three failures `verify_booking` refuses every
+    further attempt in that call.
+  - Routing to a person is the LLM edge ("you told the caller you're connecting them with a
+    colleague").
 
 ## 10. In chat, a handoff to the second assistant replays the first one's opening every turn
 

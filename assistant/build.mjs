@@ -11,7 +11,7 @@ const URLS = { mcp: "https://desk-mcp-299d7f49-1.telnyxcompute.com", dv: "https:
 const KV_NAMESPACE = "22a353f3-671d-4118-87f3-04ba6a1070aa";
 const VOICE_EN = "Telnyx.Ultra.f786b574-daa5-4673-aa0c-cbe3e8534c02";
 const VOICE_ZH = "Telnyx.Ultra.6eb8965c-e295-47bd-a9e4-3eeebb3abcff"; // Jing - Clear Coordinator
-const ALL_TOOLS = ["get_trip_status", "find_alternatives", "hold_seats", "confirm_rebooking", "request_refund", "join_waitlist", "request_callback", "get_policy"];
+const ALL_TOOLS = ["verify_booking", "get_trip_status", "find_alternatives", "hold_seats", "confirm_rebooking", "request_refund", "join_waitlist", "request_callback", "get_policy"];
 
 async function api(method, path, body) {
   const res = await fetch(`${API}${path}`, {
@@ -34,6 +34,7 @@ const BASE_INSTRUCTIONS = `You are the phone assistant for Nimbus Air, a Singapo
 How you speak (this is a phone call):
 - Short sentences. One question at a time. Never list more than two options at once.
 - Say flight numbers as letters and digits ("N B eight six two"). Read any code letter by letter using the "spelled" version a tool returns.
+- When a tool result includes a "say" line, say it to the caller (you may add a short follow-up question).
 - Never invent flights, times, seat counts, fees or rules. Only offer flights a tool returned. Answer policy questions only from get_policy.
 - Before changing anything, say what will happen and get a clear yes.
 - If a tool returns not_verified, verify the caller first (booking code and last name).
@@ -62,7 +63,7 @@ const MANDARIN_INSTRUCTIONS = `LANGUAGE RULE: Always reply in Simplified Chinese
 来电信息：已识别乘客：{{caller_known}}；姓名：{{first_name}}；订位代码：{{booking_code}}；航班：{{flight_spoken}}；状态：{{flight_status}}；今日事件：{{incident_notice}}。`;
 
 const DEFAULT_VARS = {
-  trace_id: "", verify_attempts_left: "3", caller_known: "false", first_name: "", booking_code: "", pax_count: "", flight_spoken: "", flight_status: "",
+  trace_id: "", caller_known: "false", first_name: "", booking_code: "", pax_count: "", flight_spoken: "", flight_status: "",
   disruption_mode: "off", incident_notice: "", flight_disrupted: "false", tier: "none", special_assistance: "false",
   human_queue: "open", case_status: "none", has_active_hold: "false", hold_minutes_left: "", hold_flight: "",
   rebooked_confirmation: "", callback_reason: "", calls_count: "0",
@@ -110,31 +111,9 @@ async function main() {
     },
   };
   const hangupBody = { type: "hangup", display_name: "hangup", hangup: { description: "End the call after saying goodbye." } };
-  // verify_booking is a webhook tool, not MCP: it stores attempts_left as a variable so a
-  // workflow expression edge can hand over to a person after three failures.
-  const verifyBody = {
-    type: "webhook", display_name: "verify_booking", timeout_ms: 8000,
-    webhook: {
-      name: "verify_booking",
-      description: "Verify an unrecognised caller with their 6-character booking code (read it back letter by letter) and last name. On success the call is linked to that booking.",
-      url: `${URLS.mcp}/tools/verify_booking`,
-      method: "POST",
-      headers: [
-        { name: "Authorization", value: "Bearer {{#integration_secret}}desk_mcp_bearer{{/integration_secret}}" },
-        { name: "x-trace-id", value: "{{trace_id}}" },
-      ],
-      body_parameters: {
-        type: "object",
-        properties: { booking_code: { type: "string", description: "6 characters, letters and digits" }, last_name: { type: "string" } },
-        required: ["booking_code", "last_name"],
-      },
-      store_fields_as_variables: [{ name: "verify_attempts_left", value_path: "attempts_left" }],
-    },
-  };
-  const verify = await upsertByName("/ai/tools", "/ai/tools", { method: "PATCH", path: (id) => `/ai/tools/${id}` }, verifyBody.display_name, verifyBody, "display_name");
   const transfer = await upsertByName("/ai/tools", "/ai/tools", { method: "PATCH", path: (id) => `/ai/tools/${id}` }, transferBody.display_name, transferBody, "display_name");
   const hangup = await upsertByName("/ai/tools", "/ai/tools", { method: "PATCH", path: (id) => `/ai/tools/${id}` }, hangupBody.display_name, hangupBody, "display_name");
-  console.log("tools", verify.id, transfer.id, hangup.id);
+  console.log("tools", transfer.id, hangup.id);
 
   // 3. Secondary assistant: Mandarin desk (different persona, model, voice and speech-to-text).
   const zhBody = {
@@ -148,7 +127,7 @@ async function main() {
     dynamic_variables_webhook_timeout_ms: 8000,
     dynamic_variables: DEFAULT_VARS,
     mcp_servers: [{ id: mcp.id, allowed_tools: ALL_TOOLS.filter((t) => t !== "request_refund") }],
-    tool_ids: [verify.id, transfer.id, hangup.id],
+    tool_ids: [transfer.id, hangup.id],
     enabled_features: ["telephony"],
   };
   const zh = await upsertByName("/ai/assistants", "/ai/assistants", { method: "POST", path: (id) => `/ai/assistants/${id}` }, zhBody.name, zhBody);
@@ -163,7 +142,7 @@ async function main() {
     if (node.type !== "prompt") continue;
     const needsMcp = (scope[node.id] ?? []).length > 0;
     node.tools_mode = needsMcp ? "append" : "replace";
-    node.shared_tool_ids = node.id === "n_wrap" ? [hangup.id] : (scope[node.id] ?? []).includes("verify_booking") ? [verify.id] : [];
+    node.shared_tool_ids = node.id === "n_wrap" ? [hangup.id] : [];
   }
   const mainBody = {
     name: "Nimbus Air Disruption Desk",
@@ -176,9 +155,9 @@ async function main() {
     dynamic_variables_webhook_timeout_ms: 8000,
     dynamic_variables: DEFAULT_VARS,
     mcp_servers: [{ id: mcp.id, allowed_tools: ALL_TOOLS }],
-    // No assistant-level tools: each node lists exactly what it may use (verify on the booking
-    // nodes, hangup on wrap-up), and transfer is reached only through the tool nodes behind the
-    // handoff gate, so the model can't transfer around the human-queue check.
+    // No assistant-level shared tools: hangup is listed on wrap-up only, and transfer is reached
+    // only through the tool nodes behind the handoff gate, so the model can't transfer around the
+    // human-queue check.
     tool_ids: [],
     enabled_features: ["telephony"],
     telephony_settings: { supports_unauthenticated_web_calls: true, time_limit_secs: 900 },
