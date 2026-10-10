@@ -6,6 +6,7 @@ declare global {
   interface Env {
     TRIP: __TelnyxActorNamespace;
     METRICS: __TelnyxActorNamespace;
+    CALL: __TelnyxActorNamespace;
     KV: __TelnyxKvNamespace;
   }
 }
@@ -14,6 +15,7 @@ declare module "@telnyx/edge-runtime" {
   interface Env {
     TRIP: __TelnyxActorNamespace;
     METRICS: __TelnyxActorNamespace;
+    CALL: __TelnyxActorNamespace;
     KV: __TelnyxKvNamespace;
   }
 }

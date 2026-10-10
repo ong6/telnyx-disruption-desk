@@ -84,10 +84,9 @@ export interface TripState {
   events: { at: number; ev: string; detail?: string }[];
 }
 
-/** What a verified call is allowed to act on. Carried inside the per-call MCP token. */
+/** Who an MCP request is acting for. The booking comes from the call's CallSession actor. */
 export interface CallClaims {
-  trace: string; // trace id for this call
+  trace: string; // Telnyx's W3C trace id for this conversation
   caller: string; // E.164 of the caller, "" if unknown
   booking: string; // booking code the caller is verified for, "" if not yet verified
-  exp: number; // ms epoch
 }

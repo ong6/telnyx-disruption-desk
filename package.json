@@ -5,6 +5,10 @@
   "type": "module",
   "description": "Airline disruption rebooking desk on Telnyx Voice AI + Edge Compute",
   "devDependencies": {
-    "opencode-ai": "^1.18.35"
+    "opencode-ai": "^1.18.35",
+    "tsx": "^4.23.15"
+  },
+  "scripts": {
+    "test": "tsx --test tests/*.test.ts"
   }
 }

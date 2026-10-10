@@ -55,6 +55,13 @@ export default {
         log.info("relief_flight", { flight: snap.id });
         return json(snap);
       }
+      // Simulates another passenger giving up seats (a refund elsewhere): the Flight actor's alarm
+      // then offers them to the waitlist and the Trip actor calls the first person back.
+      if (path === "/api/release" && req.method === "POST") {
+        const r = await env.FLIGHT.idFromName(String(body.flightId)).returnSeats("SIM-RELEASE", Number(body.seats ?? 1));
+        log.info("release", { flight: body.flightId, seats: body.seats ?? 1 });
+        return json(r);
+      }
       if (path === "/api/canary" && req.method === "POST") return json(await env.CANARY.idFromName("main")[body.run === false ? "stop" : "start"]());
       if (path === "/api/metrics/reset" && req.method === "POST") return json(await env.METRICS.idFromName("global").reset());
 

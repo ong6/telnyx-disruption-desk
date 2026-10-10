@@ -49,3 +49,9 @@ export function spokenTime(hhmm: string): string {
 
 /** Spoken flight number: "NB866" -> "N B eight six six" is how agents read it. */
 export const spokenFlight = (n: string) => `${n.slice(0, 2).split("").join(" ")} ${n.slice(2).split("").join(" ")}`;
+
+/** Telnyx's W3C trace id ("00-<32 hex>-<16 hex>-01" -> the 32 hex), or the fallback. */
+export const traceFrom = (traceparent: string | null, fallback: string) => {
+  const id = (traceparent ?? "").split("-")[1] ?? "";
+  return /^[0-9a-f]{32}$/.test(id) ? id : fallback;
+};

@@ -90,8 +90,9 @@ async function main() {
     incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "",
   });
 
-  // 1. MCP server: per-call bearer, decrypted by Telnyx from the webhook's encrypted variable.
-  const mcpBody = { name: "nimbus-desk-mcp", type: "http", url: `${URLS.mcp}/mcp`, api_key_ref: "{{mcp_token | mcp_enc_key}}", allowed_tools: ALL_TOOLS };
+  // 1. MCP server. Telnyx authenticates with a static bearer (integration secret); the server
+  //    identifies the call from the W3C traceparent Telnyx sends (see desk-mcp/src/index.ts).
+  const mcpBody = { name: "nimbus-desk-mcp", type: "http", url: `${URLS.mcp}/mcp`, api_key_ref: "desk_mcp_bearer", allowed_tools: ALL_TOOLS };
   const mcp = await upsertByName("/ai/mcp_servers", "/ai/mcp_servers", { method: "PUT", path: (id) => `/ai/mcp_servers/${id}` }, mcpBody.name, mcpBody);
   console.log("mcp server", mcp.id);
 

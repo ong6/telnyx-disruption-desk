@@ -2,17 +2,15 @@
 // conversation (assistant.initialization). It recognises the caller, reads their case from the
 // Trip actor, reads flags and the active incident from KV, and returns variables that both
 // personalise the conversation and drive the workflow's variable-comparison edges. It also mints
-// the per-call MCP credential.
+// conversation to a CallSession actor under Telnyx's W3C trace id, which the MCP server reads.
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { readConfigFast } from "../../../shared/config";
 import { makeLogger } from "../../../shared/log";
 import { pss, type PssBooking } from "../../../shared/pss-client";
-import { encryptForTelnyx, signClaims } from "../../../shared/token";
 import type { TripState } from "../../../shared/types";
 import { AIRLINE } from "../../../shared/seed";
-import { maskPhone, spell, spokenDate, spokenFlight, spokenTime } from "../../../shared/util";
+import { maskPhone, spell, spokenDate, spokenFlight, spokenTime, traceFrom } from "../../../shared/util";
 
-const TOKEN_TTL_MS = 2 * 3600_000;
 // Telnyx stops waiting for this webhook after about 1.2 s, whatever the assistant's configured
 // timeout says (DEBUGLOG #7), and then runs the call on default variables. Answer within budget:
 // past it, fall back to the anonymous path instead of answering late.
@@ -48,7 +46,9 @@ export default {
     const p = body?.data?.payload ?? {};
     const channel: string = p.telnyx_conversation_channel ?? "unknown";
     const callId: string = p.call_control_id ?? p.telnyx_conversation_id ?? body?.data?.id ?? `${Date.now()}`;
-    const trace = `c${createHash("sha1").update(callId).digest("hex").slice(0, 12)}`;
+    // Telnyx's W3C trace id is our trace id: its MCP client sends the same one, so the webhook,
+    // the MCP tool calls and everything they touch land in one trace.
+    const trace = traceFrom(req.headers.get("traceparent"), `c${createHash("sha1").update(callId).digest("hex").slice(0, 12)}`);
     const signed = signatureValid(req, raw);
 
     try {
@@ -66,6 +66,8 @@ export default {
       const [t, flight] = await Promise.all([
         tripStub ? within(tripStub.startCall(trace) as Promise<TripState | null>, left(), null) : null,
         booking ? within(pss(env, trace, log).flight(booking.flight, booking.date), left(), null) : null,
+        // Bind this conversation for the MCP server: who called, which booking caller ID found.
+        within(env.CALL.idFromName(trace).start(caller, booking?.code ?? "") as Promise<void>, left(), undefined),
       ]);
       const degraded = !!(signed && caller && (!booking || !flight || !t)) && Date.now() - t0 >= BUDGET_MS;
       const hold = t?.hold && t.hold.expiresAt > Date.now() ? t.hold : undefined;
@@ -97,27 +99,18 @@ export default {
         callback_reason: offerFresh ? "seat_available" : "",
         calls_count: String(t?.calls ?? 0),
       };
-      const claims = { trace, caller, booking: booking?.code ?? "", exp: Date.now() + TOKEN_TTL_MS };
-      const mcp_token = encryptForTelnyx(signClaims(claims, process.env.DESK_SIGNING_KEY ?? ""), process.env.DESK_ENC_KEY ?? "");
-
       const ms = Date.now() - t0;
       log.span({ trace, op: "webhook", outcome: !signed ? "unsigned" : degraded ? "degraded" : "ok", ms, detail: `${channel} known=${vars.caller_known} status=${vars.flight_status}` });
       log.info("dv", { trace, channel, caller: maskPhone(caller), booking: vars.booking_code, signed, config: cfg ? "memory" : "assistant-defaults", disruption: flagVars.disruption_mode ?? "default", ms });
       if (!req.headers.get("x-canary")) env.METRICS.idFromName("global").callStarted({ trace, at: Date.now(), caller: maskPhone(caller), booking: vars.booking_code, last: "webhook", outcome: "in_progress" }).catch(() => {});
-      return Response.json({
-        dynamic_variables: vars,
-        encrypted_dynamic_variables: { mcp_token },
-        conversation: { metadata: { trace_id: trace } },
-      });
+      return Response.json({ dynamic_variables: vars, conversation: { metadata: { trace_id: trace } } });
     } catch (e: any) {
       // Fail soft: an anonymous call is better than a dead line. The error is visible in logs,
       // the trace and the console's error tile.
       log.span({ trace, op: "webhook", outcome: "error", ms: Date.now() - t0, detail: String(e?.message ?? e).slice(0, 200) });
-      const claims = { trace, caller: "", booking: "", exp: Date.now() + TOKEN_TTL_MS };
       return Response.json({
         // Flag variables are left out so the assistant's defaults (synced by desk-ops) apply.
         dynamic_variables: { trace_id: trace, caller_known: "false", special_assistance: "false", flight_disrupted: "false", has_active_hold: "false", tier: "none", case_status: "none" },
-        encrypted_dynamic_variables: { mcp_token: encryptForTelnyx(signClaims(claims, process.env.DESK_SIGNING_KEY ?? ""), process.env.DESK_ENC_KEY ?? "") },
       });
     }
   },

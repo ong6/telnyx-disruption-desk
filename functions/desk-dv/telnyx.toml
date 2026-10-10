@@ -11,6 +11,10 @@ type = "Trip"
 binding = "METRICS"
 type = "Metrics"
 
+[[actors]]
+binding = "CALL"
+type = "CallSession"
+
 [storage.kv.KV]
 id = "22a353f3-671d-4118-87f3-04ba6a1070aa"
 

@@ -80,3 +80,52 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
   falls back to defaults.
 - **Takeaway.** Keep the webhook fast (target under 1 s warm). Treat chat as a test channel for
   prompts and tools, and test opening branches by phone.
+
+## 7. Telnyx stops waiting for the webhook at about 1.2 s, and the call runs on defaults
+
+- **Symptom.** In chat the caller still wasn't recognised, although the webhook logged
+  `signed:true booking:K7Q2ZX` for that conversation.
+- **Evidence.** In `telnyx-edge logs desk-dv --type invocations --json`, every request from Telnyx
+  (466 bytes, us-east-1/2, us-west-1) that took 1.2 s or more shows `response_size_bytes: 0`.
+  The canary's requests, which wait longer, show 1,062 bytes. One fast Telnyx request (85 ms) got
+  its full 1,209 bytes. The handler logged 2,287 ms for a request whose invocation ended at
+  1,255 ms: the caller had hung up. The assistant's `dynamic_variables_webhook_timeout_ms` was
+  8000.
+- **Fix.**
+  - The webhook has a hard 900 ms budget. Past it, it answers with the anonymous path (logged as
+    `degraded`) instead of answering late.
+  - Flags are served from memory with background refresh. A cold process leaves the flag
+    variables out.
+  - Every flag change is also copied into both assistants' default variables (`desk-ops`), so
+    routing is right even when the webhook is cold.
+  - The reservation mock's artificial latency is now 0 by default.
+
+## 8. Per-call MCP credentials don't work over chat
+
+- **Symptom.** With the MCP server's `api_key_ref` set to `{{mcp_token | mcp_enc_key}}`, the
+  assistant never called a tool in chat. It promised to "look for flights" and once printed raw
+  `<|tool_calls_section_begin|>` tokens as text.
+- **Evidence.**
+  - The MCP server's invocation log had no requests from Telnyx during those chats.
+  - Setting `api_key_ref` to null made Telnyx connect at once: three `POST /mcp` (152-byte
+    `initialize`) from us-east-1, which my server rejected with 401.
+  - A local MCP responder behind ngrok with the per-call credential received nothing at all.
+- **Cause.** In chat the webhook (which supplies `mcp_token`) runs at the first LLM node, after
+  the MCP connection is set up. With no credential at that moment, Telnyx excludes the server for
+  the whole conversation, as its docs describe for an unresolvable credential. On a phone call
+  the webhook runs at call setup, before MCP.
+- **Next step.** I pointed a local MCP responder (no credential) at Telnyx to see exactly what
+  its MCP client sends. There was no `_meta` and no conversation ID, but every request carried a
+  W3C `traceparent`. Its trace ID (`bd5dd177…`) was identical to the one on the
+  `assistant.initialization` webhook for the same conversation, and it stayed the same on later
+  turns' tool calls.
+- **Fix (the design now).**
+  - Telnyx authenticates to the MCP server with a static bearer, an integration secret only the
+    assistant holds.
+  - The webhook binds the conversation (caller number, booking found by caller ID) to a
+    `CallSession` actor keyed by Telnyx's trace ID.
+  - The MCP server reads that binding from the `traceparent` on each request.
+  - Identity still never comes from the model. It works in chat and on calls, and the
+    distributed trace is keyed by Telnyx's own trace ID.
+  - If a binding were ever missing, tools answer `not_verified` and the caller is asked for the
+    booking code and last name: slower, never wrong.

@@ -41,7 +41,7 @@ The demo caller's own number is recognised by caller ID and greeted by name.
                    │                                            │  ├──▶ handoff gate (expr) ─▶ transfer │ callback│
                    │                                            │  └──▶ Mandarin Desk (second assistant)          │
                    └───────┬──────────────────────────────────────────┬───────────────────────────────────────────┘
-       assistant.initialization│ (signed)                     MCP tools/call│ (per-call bearer)
+       assistant.initialization│ (signed)                     MCP tools/call│ (bearer + traceparent)
                            ▼                                              ▼
                   ┌──────────────────┐   shared actors     ┌───────────────────────────────┐
                   │ desk-dv          │ ─────────────────▶  │ desk-mcp                      │
@@ -118,3 +118,79 @@ flights a tool returned"), so those rules hold everywhere.
 **Tool scoping.** Nodes take only shared tools by ID; MCP tools can't be listed per node. So nodes
 that change bookings inherit the MCP tools, nodes that must not act get none, and the MCP server
 enforces the rules itself.
+
+## How it meets the brief
+
+| Requirement | Where |
+|---|---|
+| Assistant with a multi-node Conversation Workflow, speak nodes, conditional edges | [`assistant/flow.mjs`](assistant/flow.mjs): 15 nodes (prompt, speak, tool), expression, LLM and default edges |
+| Callable by phone | +1 743 888 2787 (TeXML app assigned by `build.mjs`) |
+| Custom MCP server, at least 3 tools | `desk-mcp`: 9 tools (`lookup_booking`, `get_trip_status`, `find_alternatives`, `hold_seats`, `confirm_rebooking`, `request_refund`, `join_waitlist`, `request_callback`, `get_policy`) |
+| Dynamic webhook variables from an Edge Function, influencing routing | `desk-dv`: caller ID → booking, case and flags; drives `disruption_mode`, `special_assistance` and `human_queue` edges |
+| Edge Functions, `telnyx-edge ship` | `functions/desk-{dv,mcp,ops,pss}` |
+| KV | Flags and active scenario, trace spans, outbound-call config |
+| Stateful Actor, read-modify-write without a lock | `Flight.hold()`; [stampede evidence](docs/evidence/) |
+| Observability | Below |
+| OpenCode with Telnyx Inference | [DOGFOODING.md](DOGFOODING.md), [`.opencode/`](.opencode/) |
+
+| Stretch goal | Where |
+|---|---|
+| Multi-assistant routing | `n_triage` → *Mandarin Desk* (GLM-5.2, Mandarin voice and speech-to-text, its own prompt), `voice_mode: distinct` |
+| Variable comparison edges | `disruption_mode`, `special_assistance && human_queue`, `human_queue`, `telnyx_conversation_duration_secs >= 300` |
+| Alarms in actors | `Flight` (hold expiry, waitlist offers), `Trip` (outbound callback call), `Canary` (every minute) |
+| Object storage | Policy documents read by `get_policy`; an itinerary receipt written per rebooking (`receipts/<code>.json`) |
+| KV feature flags | Disruption mode, human queue, hold length: flipped on the console, no redeploy |
+| Shared actors | `Flight`, `Trip`, `CallSession` and `Metrics` are owned by `desk-mcp`, bound by `desk-dv` and `desk-ops` |
+| Custom variables that route | `disruption_mode`, `special_assistance`, `human_queue` |
+| Distributed tracing | One trace ID, Telnyx's own W3C trace ID, across webhook → KV/actors → MCP → reservation system; waterfall on the console |
+
+## Observability
+
+- **Logs.** One JSON line per event from every function: `ts, svc, trace, op, outcome, ms`. The
+  caller's number is masked. Read with `telnyx-edge logs <fn> --tail`.
+- **Traces.** Every hop writes a span under the call's trace ID: webhook, reservation-system
+  calls and cache hits, each MCP tool. The console draws one call as a waterfall. The trace ID is
+  Telnyx's own `traceparent`, so it also matches Telnyx's side.
+- **Signals beyond logs.**
+  - Per-minute counters and latency (p50/p95) in the `Metrics` actor: calls, rebooked, refunded,
+    waitlisted, seat races lost, tool errors.
+  - Seats left per flight.
+  - The platform's own `telnyx-edge metrics <fn>`.
+- **Knowing within a minute.** The `Canary` actor's alarm runs every 60 s: it calls the webhook,
+  MCP `tools/list` and a real tool call, the way Telnyx does. The console's health pill goes red
+  when the last good probe is older than 90 s or any probe fails, and the "tool errors (1 min)"
+  tile counts live failures.
+- **What I'd look at first.**
+  1. The failing call's trace, to see which hop.
+  2. `telnyx-edge logs <fn> --type invocations --json`: status, duration, response size and
+     region per request. That's how bug #7 was found.
+- **Debugging trail.** [DEBUGLOG.md](DEBUGLOG.md): eight real bugs, each with its evidence.
+
+## Run it yourself
+
+```bash
+source scripts/env.sh                  # repo-local telnyx-edge and opencode, .env
+telnyx-edge secrets add ...            # DESK_ADMIN_TOKEN, PSS_API_KEY, DESK_MCP_BEARER, DESK_TELNYX_KEY, DEMO_CALLER_NUMBER
+for f in functions/*; do (cd $f && npm i && telnyx-edge ship); done
+node assistant/build.mjs               # MCP server, tools, both assistants, workflow, number
+curl -X POST $OPS/api/scenario -H "authorization: Bearer $DESK_ADMIN_TOKEN" -d '{"id":"typhoon"}'
+node scripts/chat.mjs "Hi, my flight was cancelled" "Find me the earliest flight"
+node scripts/stampede.mjs 300 60
+npm test
+```
+
+Infrastructure (created once): KV namespace `desk-kv`, SQL database `desk-pss`, bucket
+`nimbus-desk-*` in ap-southeast-1, the integration secret `desk_mcp_bearer`.
+
+## Limits and what I'd do next
+
+- **Trial account.** It only accepts calls from its verified number and only calls out to it. A
+  paid account lifts both.
+- **Seat counts are inventory held in actors for the disruption window.** A real deployment would
+  receive its inventory allocation from the airline's reservation system and write back
+  confirmed changes, as `desk-pss` does here. It would also retry failed write-backs (today they
+  are logged as `ticketing: pending`).
+- **The `Metrics` actor is a single instance.** At real volume it would be sharded by minute or by
+  hash.
+- **Chat isn't the product channel.** Telnyx runs the webhook later in chat than on calls
+  (DEBUGLOG #6), so the opening branch is tested by phone.

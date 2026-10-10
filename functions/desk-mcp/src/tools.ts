@@ -24,8 +24,12 @@ const MAX_VERIFY_ATTEMPTS = 3;
 
 const session = (ctx: ToolCtx) => ctx.env.CALL.idFromName(ctx.claims.trace);
 
+/** The booking this call may act on: bound by the webhook (caller ID) or by lookup_booking. */
 async function sessionBooking(ctx: ToolCtx): Promise<string> {
-  return ctx.claims.booking || (await session(ctx).get()).booking;
+  if (ctx.claims.booking) return ctx.claims.booking;
+  const s = await session(ctx).get();
+  if (s.caller && !ctx.claims.caller) ctx.claims.caller = s.caller;
+  return s.booking;
 }
 
 async function requireBooking(ctx: ToolCtx): Promise<PssBooking> {

@@ -6,21 +6,27 @@ export { Trip } from "./trip";
 export { Metrics } from "./metrics";
 export { CallSession } from "./call";
 import { makeLogger } from "../../../shared/log";
-import { verifyClaims } from "../../../shared/token";
 import type { CallClaims } from "../../../shared/types";
+import { traceFrom } from "../../../shared/util";
 import { TOOLS, ToolError } from "./tools";
 
 const SERVER = { name: "nimbus-disruption-desk", version: "1.0.0" };
 const rpc = (id: unknown, result: unknown) => Response.json({ jsonrpc: "2.0", id, result });
 const rpcError = (id: unknown, code: number, message: string) => Response.json({ jsonrpc: "2.0", id, error: { code, message } });
 
-/** Per-call token (from Telnyx) or, for tests and load scripts, the admin token plus headers. */
+/**
+ * Telnyx authenticates with a static bearer (an integration secret only the assistant holds).
+ * Which call this is comes from the W3C traceparent Telnyx sends: its trace id is the same one
+ * the webhook saw, and the webhook bound the caller to it in a CallSession actor. Tests and the
+ * load script use the admin token plus x-trace-id / x-test-booking.
+ */
 function authenticate(req: Request): CallClaims | null {
   const bearer = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (!bearer) return null;
   if (bearer === process.env.DESK_ADMIN_TOKEN)
-    return { trace: req.headers.get("x-trace-id") ?? `test-${Date.now()}`, caller: "", booking: (req.headers.get("x-test-booking") ?? "").toUpperCase(), exp: Date.now() + 3600_000 };
-  return verifyClaims(bearer, process.env.DESK_SIGNING_KEY ?? "");
+    return { trace: req.headers.get("x-trace-id") ?? `test-${Date.now()}`, caller: "", booking: (req.headers.get("x-test-booking") ?? "").toUpperCase() };
+  if (bearer !== process.env.DESK_MCP_BEARER) return null;
+  return { trace: traceFrom(req.headers.get("traceparent"), "mcp-" + Date.now()), caller: "", booking: "" };
 }
 
 export default {

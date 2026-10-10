@@ -1,18 +1,28 @@
-// One actor per phone call: which booking this call has verified and how many attempts failed.
-// Per-call state with a read-modify-write counter, read on every tool call, so it needs to be
-// fast and consistent: an actor, not KV (a KV read costs over a second from a function).
+// One actor per conversation, keyed by Telnyx's W3C trace id. The webhook binds who is calling
+// (caller number, booking found by caller ID); the MCP server reads it on every tool call to
+// know whose booking it may act on, without trusting anything the model says. Also holds the
+// verification attempt counter: read-modify-write, so an actor, not KV.
 import { StatefulActor } from "@telnyx/edge-runtime";
 
+export interface CallBinding { caller: string; booking: string; fails: number; at: number }
+
 export class CallSession extends StatefulActor {
-  async get(): Promise<{ booking: string; fails: number }> {
-    return { booking: (await this.ctx.storage.get<string>("booking")) ?? "", fails: (await this.ctx.storage.get<number>("fails")) ?? 0 };
+  async get(): Promise<CallBinding> {
+    return (await this.ctx.storage.get<CallBinding>("s")) ?? { caller: "", booking: "", fails: 0, at: 0 };
   }
-  async bind(booking: string) {
-    await this.ctx.storage.put("booking", booking);
+  /** Called by the webhook at the start of the conversation. */
+  async start(caller: string, booking: string): Promise<void> {
+    const s = await this.get();
+    await this.ctx.storage.put("s", { ...s, caller, booking: booking || s.booking, at: Date.now() });
+  }
+  /** Called by lookup_booking once an unrecognised caller proves the booking. */
+  async bind(booking: string): Promise<void> {
+    const s = await this.get();
+    await this.ctx.storage.put("s", { ...s, booking });
   }
   async fail(): Promise<number> {
-    const fails = ((await this.ctx.storage.get<number>("fails")) ?? 0) + 1;
-    await this.ctx.storage.put("fails", fails);
-    return fails;
+    const s = await this.get();
+    await this.ctx.storage.put("s", { ...s, fails: s.fails + 1 });
+    return s.fails + 1;
   }
 }
