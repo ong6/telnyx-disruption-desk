@@ -7,8 +7,12 @@ This build was made with two AI coding tools, and the line between them is state
 - **Claude Code** wrote the four edge functions, the workflow definition and the build and test
   scripts. It also ran the deploys, the live tests and the debugging in [DEBUGLOG.md](DEBUGLOG.md).
 - **OpenCode on Telnyx-hosted models**, through the `@telnyx/opencode` plugin, did self-contained
-  jobs: the five policy documents the assistant reads aloud (`content/policies/`), and the unit
-  tests for the pure modules (`tests/shared.test.ts`).
+  jobs:
+  - the five policy documents the assistant reads aloud (`content/policies/`);
+  - the unit tests for the pure modules (`tests/shared.test.ts`);
+  - the unit tests for the seat-inventory actor (`tests/flight.test.ts`).
+- **From 2026-10-11 on**, changes go through OpenCode on Telnyx models. Claude Code writes the task
+  and reviews the result. Commit trailers name the model that wrote each change.
 - **Telnyx-hosted models run the product:** Kimi-K2.6 runs both desks. GLM-5.2 was tried for the
   Mandarin Desk.
 
@@ -56,6 +60,10 @@ Kimi-K3 and GLM-5.3 can't be the voice model: Telnyx marks them chat-only.
     That was my error, not the model's; `npm test` now runs through `tsx`.
   - One assertion was wrong: it assumed a flight departing exactly at `notBefore` is eligible,
     while the ranking deliberately requires "strictly after". I fixed the test's boundary by hand.
+- **Actor tests in one pass (Kimi-K3).** Kimi-K3 read the Flight actor and the runtime's
+  `StatefulActor` typings, and built a fake storage and a stubbed clock for time travel. It wrote 7
+  tests: sold out, all-or-nothing holds, idempotent holds, confirm, expiry, release, and the
+  waitlist offer through the alarm. They passed with no hand edits.
 - **Runtime model quirk.** When an MCP server had been dropped from a chat (see DEBUGLOG #8),
   Kimi-K2.6 tried to call the missing tool anyway and printed raw `<|tool_calls_section_begin|>`
   tokens as text. Watch for it in transcripts: it means the model expected a tool that wasn't
