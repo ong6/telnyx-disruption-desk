@@ -9,6 +9,7 @@
     "tsx": "^4.23.15"
   },
   "scripts": {
-    "test": "tsx --test tests/*.test.ts"
+    "test": "tsx --test tests/*.test.ts",
+    "opencode": "scripts/opencode.sh"
   }
 }
