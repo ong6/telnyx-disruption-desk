@@ -79,7 +79,7 @@ const TESTS = [
     // and the demo on a phone call.
     name: "Mandarin speaker",
     destination: MANDARIN_DESK,
-    instructions: "You speak only Mandarin Chinese. Say: 你好，我的航班取消了，可以用中文帮我吗？ When asked for your booking details, give booking code H8N6CU and last name Hughes. Keep the conversation going in Mandarin: after any reply, briefly repeat that your flight was cancelled and ask what your options are. Never switch to English and never end the conversation yourself.",
+    instructions: "You speak only Mandarin Chinese. Say: 你好，我的航班取消了，可以用中文帮我吗？ When asked for your booking details, give booking code H8N6CU and last name Hughes. Each turn, move the conversation forward in Mandarin: ask about the options for your cancelled flight, then about the cost or the timing of whichever option they mention. Never switch to English and never end the conversation yourself.",
     rubric: [{ name: "Continues in Chinese", criteria: "The replies are in Mandarin Chinese and help with the caller's request (acknowledging the cancellation, asking for details, or offering options), rather than repeating a transfer line or switching to English." }],
   },
 ];

@@ -33,14 +33,11 @@ const BASE_INSTRUCTIONS = `You are the phone assistant for Nimbus Air, a Singapo
 
 How you speak (this is a phone call):
 - Short sentences. One question at a time. Never list more than two options at once.
-- Say flight numbers as letters and digits ("N B eight six two"). Read any code letter by letter using the "spelled" version a tool returns.
-- When a tool result includes a "say" line, say it to the caller (you may add a short follow-up question).
-- Never invent flights, times, seat counts, fees or rules. Only offer flights a tool returned. Answer policy questions only from get_policy. If no tool answered, say our system is not reachable right now and offer a colleague or a callback — never fill in a flight, time or price yourself.
-- Before changing anything, say what will happen and get a clear yes.
-- If a tool returns not_verified, verify the caller first (booking code and last name).
-- If a tool returns an error, apologise in one sentence and call the same tool once more. If it fails again, offer a person or a callback. Never guess.
-- If the caller asks for a person, don't argue: route them.
-- Never tell a caller you only speak English. Chinese speakers are routed to the Chinese-speaking desk.
+- Say flight numbers and codes letter by letter, using the "spelled" version a tool returns.
+- Filler first: before calling any tool, say one short line — "Let me check that for you" or "One moment." Never make it a question, never repeat it twice in a row.
+- Only offer flights a tool returned. Policy answers only from get_policy. If a tool result has a "say" line, say it. If no tool answered, say our system is not reachable right now and offer a colleague or a callback — never fill in a flight, time or price yourself.
+- Before changing anything, say what will happen and get a clear yes. If a tool returns not_verified, verify the caller first (booking code and last name). If a tool fails, apologise in one sentence, call it once more, then offer a person or a callback. Never guess.
+- If the caller asks for a person, don't argue: route them. Never say you only speak English; Chinese speakers are routed to the Chinese-speaking desk.
 
 What our systems know about this call:
 - Known caller: {{caller_known}}. Name: {{first_name}}. Booking: {{booking_code}} ({{pax_count}} passengers). Tier: {{tier}}.
@@ -160,7 +157,11 @@ async function main() {
     instructions: BASE_INSTRUCTIONS,
     greeting: "",
     voice_settings: { voice: VOICE_EN },
-    transcription: { model: "deepgram/flux", language: "en" },
+    // deepgram/flux is a turn-taking model: these settings decide how fast the caller's turn
+    // hands over. eager_eot_threshold below eot_threshold enables eager end-of-turn, so a
+    // confident pause hands over sooner instead of waiting out the full threshold (the caller
+    // heard the default as dead air). Revert eager to 0.8 if the demo feels jumpy.
+    transcription: { model: "deepgram/flux", language: "en", settings: { eot_threshold: 0.8, eager_eot_threshold: 0.5, eot_timeout_ms: 5000 } },
     dynamic_variables_webhook_url: `${URLS.dv}/`,
     dynamic_variables_webhook_timeout_ms: 8000,
     dynamic_variables: DEFAULT_VARS,

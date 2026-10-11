@@ -36,7 +36,7 @@ export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinA
       "1. If caller_known is false and you haven't verified them yet, ask for the 6-character booking code (read it back letter by letter) and last name, then call verify_booking. Count the failed attempts yourself — attempts_left can read high again after a reconnect. After the third verified:false in this conversation, or when a call returns attempts_left 0, stop asking and tell the caller you're connecting them with a colleague.",
       "2. Call find_alternatives. Never mention how many options exist or that you are searching: say only the one flight you are offering, with day and departure time. If they decline it, offer the next option in a separate turn. Never offer two flights, or a flight and a refund, in the same turn.",
       "3. When they choose, call hold_seats with that flight_id. If the hold fails because the flight just filled, say so and offer the next option.",
-      "4. Once held, read back the flight, date, time and number of passengers, then stop and ask for a clear yes. Wait for it: if they ask something else, answer it and re-ask. Do not call confirm_rebooking until the caller clearly says yes.",
+      "4. Once held, read back the flight, date, time and the passengers by name ({{first_name}} and their party), then stop and ask for a clear yes. Wait for it: if they ask something else, answer it and re-ask. Do not call confirm_rebooking until the caller clearly says yes.",
       "5. If a tool fails or returns not_verified after this caller was already verified, apologise in one sentence and call the same tool once more. Only offer a colleague or a callback if it fails again.",
     ].join("\n")),
     prompt("n_confirm", "Confirm", [

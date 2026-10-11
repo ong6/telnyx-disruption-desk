@@ -302,3 +302,23 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
 - **Fix.** The main desk now runs `zai-org/GLM-5.3-Flash`: measured 4.4-5.7 s per turn on the
   same prompts, and the full suite still passes 7/7 (`tests-2026-10-11-12-54.md`). The Mandarin
   desk keeps Kimi-K2.6, where GLM drifted into English in earlier testing.
+
+## 19. Filling the gap: what the platform can say while it is thinking
+
+- **Question.** If a turn takes seconds, can the assistant say something while it works?
+- **Evidence.** The API schema has exactly two filler surfaces: synchronous webhook tools
+  (`messages` with `request_start` and `request_response_delayed`) and A2A agents. Workflow
+  tool nodes get a single pre-execution `message` (the handoff gate and transfers already
+  speak one). There is **no** filler mechanism on prompt nodes, MCP tool calls, or speak
+  nodes — so during the model's own tool calls, the only filler is what the model says before
+  calling the tool.
+- **Fix.**
+  - The base instructions now require a short line before any tool call ("Let me check that
+    for you" / "One moment", never a question). The transcripts show it delivered as its own
+    message before the tool runs.
+  - The main desk's transcription (deepgram/flux) now sets `eager_eot_threshold: 0.5` under
+    `eot_threshold: 0.8`: a confident pause hands the turn over sooner. Revert to 0.8 if the
+    demo feels jumpy.
+  - The base instructions lost ~30% of their tokens (same rules), and the rebook node reads
+    the passengers back by name — a grader nit that kept recurring.
+- **Result.** Suite 7/7 (`tests-2026-10-11-14-32.md`), chat turns at 4.2-5.3 s.
