@@ -9,6 +9,10 @@ Built on Telnyx Voice AI (Conversation Workflows, multi-assistant routing, trans
 Edge Compute: four Edge Functions, Stateful Actors with alarms, KV, Cloud Storage and a SQL
 database. Nimbus Air is fictional.
 
+**Docs:** the feature tour for the demo is [docs/FEATURES.md](docs/FEATURES.md); the technical
+deep dive is [docs/TECHNICAL.md](docs/TECHNICAL.md); demo-day Q&A prep with one talking point
+per requirement is [docs/QA.md](docs/QA.md).
+
 ## Try it
 
 | What | Where |
