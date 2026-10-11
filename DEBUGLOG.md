@@ -286,3 +286,19 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
 - **Fix.** The Mandarin test now targets the Mandarin desk assistant directly and judges its
   replies. The handoff itself is verified by the workflow configuration and on a phone call
   (the demo script's Mandarin path), which is the channel it exists for.
+
+## 18. The caller heard dead air: ten seconds of silence, then "Hello? Are you still there?"
+
+- **Symptom.** On a real call, after the caller asked for a rebooking the assistant produced
+  nothing for about ten seconds (three `[long silence]` events in the transcript). The caller
+  interrupted with "Hello? Are you still there?" and the call ended with no reply.
+- **Evidence.** Conversation 875e8f24: the opening played at +23 s from call start, the caller's
+  request at 12:37:22, silences at +1/+1/+7 s, the follow-up at +7 s, and then nothing. Chat
+  benchmarks against the same build: 5.7-7.1 s per turn on `moonshotai/Kimi-K2.6`. Backend ops
+  were not the cost: webhook p50 263 ms, tools p50 105 ms.
+- **Cause.** Turn latency on a large MoE model: every caller utterance pays the LLM edge
+  evaluations plus the node's own model turn before anything is spoken. On a call that stack-up
+  reads as a hang, and a caller who interrupts mid-turn kills the exchange.
+- **Fix.** The main desk now runs `zai-org/GLM-5.3-Flash`: measured 4.4-5.7 s per turn on the
+  same prompts, and the full suite still passes 7/7 (`tests-2026-10-11-12-54.md`). The Mandarin
+  desk keeps Kimi-K2.6, where GLM drifted into English in earlier testing.

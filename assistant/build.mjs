@@ -152,7 +152,11 @@ async function main() {
   }
   const mainBody = {
     name: "Nimbus Air Disruption Desk",
-    model: "moonshotai/Kimi-K2.6",
+    // GLM-5.3-Flash: measured 4.4-5.7 s per turn vs Kimi-K2.6's 5.7-7.1 s — on a call the caller
+    // heard the Kimi turns as dead air (a real call hung long enough for "Hello? Are you still
+    // there?"). The Mandarin desk keeps Kimi-K2.6: GLM drifted into English there (#5 in
+    // DOGFOODING).
+    model: "zai-org/GLM-5.3-Flash",
     instructions: BASE_INSTRUCTIONS,
     greeting: "",
     voice_settings: { voice: VOICE_EN },

@@ -45,7 +45,7 @@ const TESTS = [
   },
   {
     name: "Refund instead of rebooking",
-    instructions: "You are Priya Raman, booking code R2D5VK, last name Raman. Your flight to Hong Kong today was cancelled. You no longer want to travel and want your money back. When the assistant asks whether to process the refund, say yes clearly. Stay on the line until the refund is done and write down the refund reference.",
+    instructions: "You are Priya Raman, booking code R2D5VK, last name Raman. Your flight to Hong Kong today was cancelled. You do NOT want to travel and want your money back. Refuse any offer to move to another flight, hold seats or rebook: keep saying you want the full refund. When the assistant asks whether to process the refund, say yes clearly. Stay on the line until the refund is done and write down the refund reference.",
     rubric: [
       { name: "Refund rights stated", criteria: "States that the passenger is entitled to a full refund including taxes and fees to the original payment method, and mentions the free-change alternative." },
       { name: "Refund completed", criteria: "Processes the refund and gives a refund reference, read letter by letter." },
