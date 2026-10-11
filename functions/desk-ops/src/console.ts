@@ -34,9 +34,18 @@ button:hover{border-color:var(--amber)}button.danger{border-color:#5a2a27}input{
 .wf i.error{background:var(--red)}.wf i.hit{background:var(--green)}.wf span{position:absolute;left:0;top:2px;white-space:nowrap;color:var(--ink);text-shadow:0 0 4px #000}
 .spark{display:flex;gap:2px;align-items:flex-end;height:20px}.spark i{width:5px;background:var(--green);border-radius:1px}.spark i.bad{background:var(--red)}
 #toast{position:fixed;bottom:16px;right:16px;background:#1d242e;border:1px solid var(--amber);padding:10px 14px;border-radius:4px;font:12px var(--mono);display:none}
+.lives{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:10px}
+.live{background:#10141a;border:1px solid var(--line);border-radius:4px;padding:10px 12px;font:12px var(--mono);overflow:hidden}
+.live.solo{grid-column:1/-1}
+.live .hd{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dim)}
+.tl b{color:var(--ink);font-weight:600}
+.tl.err{color:var(--red)}.tl.hit{color:var(--green)}
+button.busy,a.busy{opacity:.55;pointer-events:none}
+#busy{display:none}
 @media (max-width:900px){.board,.side{grid-column:span 12}main{padding:12px}header{padding:12px}}
 </style></head><body>
-<header><h1>Nimbus Air · Disruption Desk</h1><span id="mode" class="pill">—</span><span id="queue" class="pill">—</span><span id="health" class="pill">canary —</span><span id="state" class="pill" title="How long the console took to read its own state, and which subsystems failed to answer">console —</span><span id="scn" class="mut"></span></header>
+<header><h1>Nimbus Air · Disruption Desk</h1><span id="mode" class="pill">—</span><span id="queue" class="pill">—</span><span id="health" class="pill">canary —</span><span id="busy" class="pill warn">working…</span><span id="state" class="pill" title="How long the console took to read its own state, and which subsystems failed to answer">console —</span><span id="scn" class="mut"></span></header>
 <main>
 <section class="wide" style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between">
 <div><h2 style="margin:0 0 6px">Talk to the desk</h2><div class="mut">Call from this browser (allow the microphone). Phone: +1 743 888 2787 (trial account: only the verified number can dial in).
@@ -44,16 +53,17 @@ button:hover{border-color:var(--amber)}button.danger{border-color:#5a2a27}input{
 <telnyx-ai-agent agent-id="assistant-dbc59018-c2bb-437f-86bd-1030a9c5271b"></telnyx-ai-agent>
 </section>
 <div class="kpis" id="kpis"></div>
+<section class="wide"><h2>Live calls <span id="livepills" class="mut"></span></h2><div id="live" class="lives"></div></section>
 <section class="board"><h2>Departures · Singapore → Hong Kong</h2><table><thead><tr><th>Flight</th><th>Date</th><th>Dep</th><th>Status</th><th>Seats left</th><th>Held</th><th>Waitlist</th><th></th><th></th></tr></thead><tbody id="flights"></tbody></table></section>
-<section class="side"><h2>Scenario</h2>
-<div class="controls"><button onclick="act('/api/scenario',{id:'normal'})" title="All flights on time; FAQs and voluntary changes">Normal day</button><button class="danger" onclick="influx()" title="Typhoon cancels today's Hong Kong flights, then 200 simulated passengers call to rebook over 30 s">Influx day: typhoon + 200 callers</button></div>
+<section class="side"><h2>Demo</h2>
+<div class="controls op"><button onclick="act('/api/scenario',{id:'normal'},this)" title="All flights on time; FAQs and voluntary changes">Normal day</button><button class="danger" onclick="influx(this)" title="Typhoon cancels today's Hong Kong flights, then 200 simulated passengers call to rebook over 30 s">Influx day: typhoon + 200 callers</button></div>
 <div id="surgebox" class="mut" style="font:12px var(--mono);margin-top:6px">No surge run yet.</div>
 <div id="lock" class="help"></div>
-<details style="margin-top:10px"><summary class="help" style="cursor:pointer">Advanced (for the walkthrough)</summary>
+<details class="op" style="margin-top:10px"><summary class="help" style="cursor:pointer">More controls</summary>
 <div class="help"><b>Human queue full</b>: callers asking for a person get a callback offer instead of a transfer. <b>Relief flight</b>: ops adds a 300-seat NB870 tomorrow. <b>Hold length</b>: how long a held seat waits for a yes (45 s shows expiry live). <b>Web calls as Jun</b>: browser calls are recognised as the demo passenger. <b>free 1</b> on the board frees a seat so a waitlisted passenger gets a callback.</div>
-<div class="controls"><button onclick="flag('human_queue')">Toggle human queue</button><button onclick="act('/api/relief',{})">+ Relief flight NB870</button>
-<select id="ttl" onchange="act('/api/flags',{hold_ttl_secs:Number(this.value)})"><option value="600">hold 10 min</option><option value="120">hold 2 min</option><option value="45">hold 45 s</option></select>
-<button onclick="flag('web_calls_as_demo_caller')">Toggle web calls as Jun</button><button onclick="act('/api/metrics/reset',{})">Reset counters</button></div>
+<div class="controls"><button onclick="flag('human_queue',this)">Toggle human queue</button><button onclick="act('/api/relief',{},this)">+ Relief flight NB870</button>
+<select id="ttl" onchange="act('/api/flags',{hold_ttl_secs:Number(this.value)},this)"><option value="600">hold 10 min</option><option value="120">hold 2 min</option><option value="45">hold 45 s</option></select>
+<button onclick="flag('web_calls_as_demo_caller',this)">Toggle web calls as Jun</button><button onclick="act('/api/metrics/reset',{},this)">Reset counters</button></div>
 </details>
 <h2 style="margin-top:16px">Canary · last 30 minutes</h2><div class="spark" id="spark"></div><div class="mut" id="canarytxt" style="font:12px var(--mono);margin-top:6px"></div>
 <h2 style="margin-top:16px">Latency p50 / p95 (15 min)</h2><table><tbody id="lat"></tbody></table></section>
@@ -69,9 +79,35 @@ try{const m=location.hash.match(/key=([^&]+)/);if(m){localStorage.setItem('desk-
 let S=null;const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ago=t=>{const s=Math.round((Date.now()-t)/1000);return s<60?s+'s ago':Math.round(s/60)+'m ago'};
 function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',3500)}
-async function influx(){await act('/api/scenario',{id:'typhoon'});await act('/api/surge',{callers:200,seconds:30})}
-async function act(path,body){const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+KEY},body:JSON.stringify(body)});const j=await r.json();toast(r.ok?'done: '+path:r.status===401?'Read-only view: controls are unlocked only in the operator\\'s browser':'error: '+(j.error||r.status));load()}
-function flag(name){const cur=S?.flags?.[name];const next=name==='human_queue'?(cur==='full'?'open':'full'):(cur==='on'?'off':'on');act('/api/flags',{[name]:next})}
+let busyN=0;
+function busy(n){const b=$('busy');if(!b)return;busyN=Math.max(0,busyN+n);b.style.display=busyN?'':'none';if(busyN>1)b.textContent='working ×'+busyN;else b.textContent='working…'}
+const DONE={'/api/scenario':'scenario loaded','/api/surge':'surge started','/api/relief':'relief flight added','/api/release':'seat freed','/api/flags':'flag updated','/api/metrics/reset':'counters reset'};
+async function act(path,body,el,label){
+  const keep=el?(el.dataset.label||(el.dataset.label=el.textContent)):null;
+  const isSelect=el&&el.tagName==='SELECT';
+  if(el){el.disabled=true;el.classList.add('busy');if(!isSelect)el.textContent=label||'Working…'}
+  busy(1);
+  const t0=Date.now();
+  try{
+    const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+KEY},body:JSON.stringify(body)});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok){const extra=path==='/api/scenario'&&body&&body.id?' ('+body.id+')':'';toast((DONE[path]||'done') + extra + (Date.now()-t0>1500?' · '+Math.round((Date.now()-t0)/100)/10+' s':''))}
+    else toast(r.status===401?'Operator key required: open the operator link (scripts/console-link.mjs)':'error: '+(j.error||r.status));
+  }catch(e){toast('error: '+e)}
+  busy(-1);
+  if(el){el.disabled=false;el.classList.remove('busy');if(!isSelect)el.textContent=keep;delete el.dataset.label}
+  load();
+}
+async function influx(el){
+  const keep=el.dataset.label||(el.dataset.label=el.textContent);
+  el.disabled=true;el.classList.add('busy');
+  el.textContent='Loading typhoon…';
+  await act('/api/scenario',{id:'typhoon'});
+  el.textContent='Starting 200 callers…';
+  await act('/api/surge',{callers:200,seconds:30});
+  el.disabled=false;el.classList.remove('busy');el.textContent=keep;delete el.dataset.label;
+}
+function flag(name,el){const cur=S&&S.flags?S.flags[name]:undefined;const next=name==='human_queue'?(cur==='full'?'open':'full'):(cur==='on'?'off':'on');act('/api/flags',{[name]:next},el,'Flipping '+name+'…')}
 function sum(c,pred){return Object.entries(c).filter(([k])=>pred(k)).reduce((n,[,v])=>n+v,0)}
 function render(s){S=s;const f=s.flags;
 const st=s.stateMs||0;$('state').textContent='console '+Math.round(st/100)/10+' s'+(s.degraded?' · degraded: '+s.degraded.join(', '):'');$('state').className='pill '+(s.degraded?'on':(st>4000?'warn':''));
@@ -86,17 +122,38 @@ const c=(s.metrics&&s.metrics.counts)||{};const calls=sum(c,k=>k.startsWith('dv:
 const k=[['Calls (15 min)',calls],['Rebooked',(s.metrics&&sum(s.metrics.counts||{},k2=>k2==='mcp:tool:confirm_rebooking:ok'))||0],['Refunded',(s.metrics&&sum(s.metrics.counts||{},k2=>k2==='mcp:tool:request_refund:ok'))||0],['Waitlisted',(s.metrics&&sum(s.metrics.counts||{},k2=>k2==='mcp:tool:join_waitlist:ok'))||0],
 ['Seat races lost',(s.metrics&&sum(s.metrics.counts||{},k2=>k2==='mcp:tool:hold_seats:declined'))||0],['Tool errors (1 min)',(s.metrics&&s.metrics.errorsLastMinute)||0],['Seats left (HKG)',(s.flights||[]).filter(x=>x.status!=='cancelled').reduce((n,x)=>n+x.seatsLeft,0)]];
 $('kpis').innerHTML=k.map(([l,v])=>'<div class="kpi"><b'+(l.startsWith('Tool errors')&&v>0?' style="color:var(--red)"':'')+'>'+v+'</b><span>'+l+'</span></div>').join('');
-$('flights').innerHTML=s.flights.map(x=>{const pct=x.capacity?Math.round(100*(x.capacity-x.seatsLeft)/x.capacity):0;return '<tr><td>'+x.number+'</td><td>'+x.date.slice(5)+'</td><td>'+x.dep+'</td><td class="'+x.status+'">'+x.status.toUpperCase()+'</td><td>'+x.seatsLeft+'</td><td>'+x.held+'</td><td>'+x.waitlist+'</td><td><div class="bar"><i style="width:'+pct+'%"></i></div></td><td>'+(x.status!=='cancelled'?'<a title="simulate another passenger freeing a seat" onclick="act(\\'/api/release\\',{flightId:\\''+x.id+'\\',seats:1})">free 1</a>':'')+'</td></tr>'}).join('');
+$('flights').innerHTML=s.flights.map(x=>{const pct=x.capacity?Math.round(100*(x.capacity-x.seatsLeft)/x.capacity):0;return '<tr><td>'+x.number+'</td><td>'+x.date.slice(5)+'</td><td>'+x.dep+'</td><td class="'+x.status+'">'+x.status.toUpperCase()+'</td><td>'+x.seatsLeft+'</td><td>'+x.held+'</td><td>'+x.waitlist+'</td><td><div class="bar"><i style="width:'+pct+'%"></i></div></td><td>'+(x.status!=='cancelled'&&KEY?'<a title="simulate another passenger freeing a seat" onclick="act(\\'/api/release\\',{flightId:\\''+x.id+'\\',seats:1},this)">free 1</a>':'')+'</td></tr>'}).join('');
 $('lat').innerHTML=Object.entries((s.metrics&&s.metrics.latency)||{}).sort().map(([k,v])=>'<tr><td>'+esc(k)+'</td><td>'+v.p50+' / '+v.p95+' ms</td><td class="mut">n='+v.n+'</td></tr>').join('')||'<tr><td class="mut">no traffic yet</td></tr>';
 $('calls').innerHTML=((s.metrics&&s.metrics.calls)||[]).map(r=>'<tr><td><a data-tid="'+esc(r.trace)+'" onclick="showTrace(this.dataset.tid)">'+esc(r.trace)+'</a></td><td>'+ago(r.at)+'</td><td>'+esc(r.caller||'web')+'</td><td>'+esc(r.booking||'—')+'</td><td>'+esc(r.last)+'</td><td>'+esc(r.outcome)+'</td></tr>').join('')||'<tr><td class="mut" colspan=6>no calls yet</td></tr>';
 $('trips').innerHTML=(s.trips||[]).map(t=>{const d=t.rebookedTo?t.rebookedTo.flightId+' · '+t.rebookedTo.confirmation:t.hold&&t.hold.expiresAt>Date.now()?'holding '+t.hold.flightId+' · '+Math.round((t.hold.expiresAt-Date.now())/1000)+'s':t.refund?t.refund.reference:t.waitlist?'waitlist '+t.waitlist.flightId+(t.callback?' · callback '+(t.callback.placedAt?'placed '+esc(t.callback.result):'due'):''):'';return '<tr><td>'+esc(t.code)+'</td><td>'+t.pax+'</td><td>'+esc(t.status)+'</td><td class="mut trunc" title="'+esc(d)+'">'+esc(d)+'</td></tr>'}).join('');}
-function renderLock(){$('lock').textContent=KEY?'Controls unlocked in this browser.':'Read-only view. Controls work only in the operator\\'s browser.'}
+function renderLock(){
+  document.querySelectorAll('.op').forEach(e=>{e.style.display=KEY?'':'none'});
+  $('lock').textContent=KEY?'':'Read-only view — the demo controls live in the operator\\'s link (scripts/console-link.mjs).';
+}
 function renderSurge(s){const g=s.surge;if(!g||g.total==null){return}const pct=g.total?Math.round(100*g.done/g.total):0;const el=((g.finishedAt||Date.now())-g.startedAt)/1000;
 $('surgebox').innerHTML=(g.running?'Surge running':'Last surge')+': '+g.done+' / '+g.total+' passengers in '+el.toFixed(0)+' s ('+(g.done/Math.max(1,el)).toFixed(1)+'/s)'+'<div class="prog"><i style="width:'+pct+'%"></i></div><div class="surge"><div><b>'+g.rebooked+'</b><span>rebooked</span></div><div><b>'+g.waitlisted+'</b><span>waitlisted + callback</span></div><div><b>'+g.raceLost+'</b><span>seat races lost, retried</span></div><div><b>'+g.errors+'</b><span>errors</span></div><div><b>'+g.p50+' / '+g.p95+'</b><span>ms per passenger p50 / p95</span></div></div>'}
 function renderCbs(s){$('cbs').innerHTML=(s.callbacks||[]).map(c=>'<tr><td>'+ago(c.at)+'</td><td>'+esc(c.booking||c.caller||'unknown')+'</td><td class="mut trunc" title="'+esc(c.reason)+'">'+esc(c.reason)+'</td><td><a data-tid="'+esc(c.trace)+'" onclick="showTrace(this.dataset.tid)">trace</a></td></tr>').join('')||'<tr><td class="mut">empty</td></tr>'}
+let liveCache={};
+async function tickLive(){
+  const box=$('live');if(!box)return;
+  const calls=(S&&S.metrics&&S.metrics.calls)||[];
+  const actives=calls.filter(c=>(!c.outcome||c.outcome==='in_progress')&&Date.now()-c.at<300000).slice(0,4);
+  if(!actives.length){box.innerHTML='<div class="mut" style="font:12px var(--mono)">No live calls — start one with the widget above, the phone line, or the influx button.</div>';liveCache={};$('livepills').textContent='';return}
+  $('livepills').textContent=actives.length+' active · updates every 3 s';
+  const solo=actives.length===1;
+  const panels=await Promise.all(actives.map(async c=>{
+    const r=await fetch('/api/trace/'+encodeURIComponent(c.trace),{headers:{authorization:'Bearer '+KEY}}).then(x=>x.json()).catch(()=>null);
+    const spans=(r&&r.spans)||[];
+    liveCache[c.trace]=spans;
+    const t0=spans.length?Math.min(...spans.map(x=>x.at-(x.ms||0))):0;
+    const lines=spans.slice(-(solo?14:6)).map(x=>{const cls=x.outcome==='error'?'err':x.outcome==='hit'?'hit':'';return '<div class="tl '+cls+'">+'+Math.max(0,(x.at-(x.ms||0))-t0)+'ms <b>'+esc(x.svc)+' '+esc(x.op)+'</b> · '+esc(x.outcome)+(x.detail?' · '+esc(x.detail):'')+'</div>'}).join('')||'<div class="tl mut">waiting for the first span…</div>';
+    return '<div class="live'+(solo?' solo':'')+'"><div class="hd"><span class="pill ok">LIVE</span><a data-tid="'+esc(c.trace)+'" onclick="showTrace(this.dataset.tid)">'+esc(c.trace)+'</a><span class="pill">'+esc(c.booking||'web')+'</span><span class="mut">'+esc(c.caller||'')+'</span><span class="mut">'+esc(c.last||'')+'</span></div><div style="margin-top:8px">'+lines+'</div></div>';
+  }));
+  box.innerHTML=panels.join('');
+}
 async function showTrace(id){$('tid').textContent=id;const r=await (await fetch('/api/trace/'+encodeURIComponent(id),{headers:{authorization:'Bearer '+KEY}})).json();const sp=r.spans||[];if(!sp.length){$('trace').textContent='no spans yet';return}
 const t0=Math.min(...sp.map(x=>x.at-x.ms)),t1=Math.max(...sp.map(x=>x.at)),W=Math.max(1,t1-t0);
 $('trace').innerHTML=sp.map(x=>{const l=100*(x.at-x.ms-t0)/W,w=Math.max(.6,100*x.ms/W);const cls=x.outcome==='error'?'error':x.outcome==='hit'?'hit':'';return '<div class="wf"><i class="'+cls+'" style="left:'+l+'%;width:'+w+'%"></i><span>+'+(x.at-x.ms-t0)+'ms '+esc(x.svc)+' '+esc(x.op)+' · '+esc(x.outcome)+' · '+x.ms+'ms '+esc(x.detail||'')+'</span></div>'}).join('')}
-async function load(){try{const t0=Date.now();const s=await (await fetch('/api/state',{cache:'no-store',headers:{authorization:'Bearer '+KEY}})).json();s.stateMs=Date.now()-t0;render(s);renderCbs(s);renderSurge(s);renderLock()}catch(e){}}
+async function load(){try{const t0=Date.now();const s=await (await fetch('/api/state',{cache:'no-store',headers:{authorization:'Bearer '+KEY}})).json();s.stateMs=Date.now()-t0;render(s);renderCbs(s);renderSurge(s);renderLock();tickLive()}catch(e){}}
 load();setInterval(load,3000);
 </script></body></html>`;
