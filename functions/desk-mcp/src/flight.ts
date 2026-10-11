@@ -136,18 +136,32 @@ export class Flight extends StatefulActor {
     const s = await this.load();
     if (!s) return;
     const expired = this.expire(s);
-    const offered: { booking: string; holdId: string; expiresAt: number }[] = [];
+    const offered: { booking: string; pax: number; holdId: string; expiresAt: number }[] = [];
     while (s.waitlist.length && this.seatsLeft(s) >= s.waitlist[0].pax) {
       const w = s.waitlist.shift()!;
       const h: Hold = { id: newId("offer"), booking: w.booking, pax: w.pax, expiresAt: Date.now() + OFFER_TTL_MS };
       s.holds[h.id] = h;
       s.offers[w.booking] = h.id;
-      offered.push({ booking: w.booking, holdId: h.id, expiresAt: h.expiresAt });
+      offered.push({ booking: w.booking, pax: w.pax, holdId: h.id, expiresAt: h.expiresAt });
     }
     await this.save(s);
     await this.scheduleAlarm(s);
     console.log(JSON.stringify({ ts: new Date().toISOString(), svc: "flight", ev: "alarm", flight: s.id, expired: expired.length, offered: offered.length }));
-    // At-least-once: seatOffered is idempotent per holdId.
-    for (const o of offered) await (this.env as any).TRIP.idFromName(o.booking).seatOffered(s.id, o.holdId, o.expiresAt);
+    // At-least-once: seatOffered is idempotent per holdId. One failed Trip actor must not stop
+    // the remaining offers, and must not silently demote the passenger whose call failed: put
+    // them back at the head of the waitlist so the next alarm tries again.
+    for (const o of offered) {
+      try {
+        await (this.env as any).TRIP.idFromName(o.booking).seatOffered(s.id, o.holdId, o.expiresAt);
+      } catch {
+        const cur = await this.load();
+        if (!cur) return;
+        if (cur.holds[o.holdId]) delete cur.holds[o.holdId];
+        delete cur.offers[o.booking];
+        cur.waitlist.unshift({ booking: o.booking, pax: o.pax, at: Date.now() });
+        await this.save(cur);
+        console.log(JSON.stringify({ ts: new Date().toISOString(), svc: "flight", ev: "offer_retry", flight: s.id, booking: o.booking }));
+      }
+    }
   }
 }

@@ -7,6 +7,7 @@ export { Metrics } from "./metrics";
 export { CallSession } from "./call";
 import { makeLogger } from "../../../shared/log";
 import type { CallClaims } from "../../../shared/types";
+import type { CallBinding } from "./call";
 import { traceFrom } from "../../../shared/util";
 import { TOOLS, ToolError } from "./tools";
 
@@ -26,11 +27,39 @@ async function authenticate(req: Request, env: any): Promise<CallClaims | null> 
   if (bearer === process.env.DESK_ADMIN_TOKEN)
     return { trace: req.headers.get("x-trace-id") ?? `test-${Date.now()}`, caller: "", booking: (req.headers.get("x-test-booking") ?? "").toUpperCase() };
   if (bearer !== process.env.DESK_MCP_BEARER) return null;
+  // The assistant's MCP client may reopen its session mid-conversation with a fresh per-turn
+  // trace id, which has no binding: verification landed on throwaway sessions and a fail counter
+  // never accumulated (DEBUGLOG #9, seen again after the 17:01 revision cutover). A
+  // Streamable-HTTP session id, echoed by the client on
+  // every request, pins the conversation to one trace. The webhook's own link to the
+  // conversation's first trace still wins when it is reachable, so a chat caller identified by
+  // caller ID is found even if the pin happened before the webhook bound them.
+  const sid = req.headers.get("mcp-session-id");
   const tp = traceFrom(req.headers.get("traceparent"), "");
-  if (!tp) return { trace: "mcp-" + Date.now(), caller: "", booking: "" };
-  // Follow the webhook's link from this turn's trace id to the conversation's first one.
-  const link = await env.CALL.idFromName(tp).get().catch(() => null);
-  return { trace: link?.canonical || tp, caller: "", booking: "" };
+  const pinned = sid ? await probeSession(env, `mcp-session:${sid}`) : null;
+  const linked = tp ? await probeSession(env, tp) : null;
+  let trace: string;
+  if (linked?.canonical) trace = linked.canonical; // 1. the webhook's authoritative link
+  else if (pinned?.canonical) trace = pinned.canonical; // 2. the conversation we pinned earlier
+  else if (linked && (linked.booking || linked.caller)) trace = tp; // 3. the webhook bound this exact trace
+  else if (pinned) trace = `mcp-session-${sid!}`; // 4. pin exists, empty: stable from the first tool call on
+  else if (tp) trace = tp; // 5. unlinked: use this turn's trace and pin it from now on
+  else trace = `mcp-${Date.now()}`;
+  if (sid) env.CALL.idFromName(`mcp-session:${sid}`).link(trace).catch(() => {});
+  return { trace, caller: "", booking: "" };
+}
+
+/**
+ * CallSession reads fail for a few seconds while the actor host restarts on a deploy
+ * (DEBUGLOG #14); retry the failure briefly. An empty binding is a real answer, returned as-is.
+ */
+async function probeSession(env: any, id: string, tries = 3): Promise<CallBinding | null> {
+  for (let i = 0; i < tries; i++) {
+    const out = await env.CALL.idFromName(id).get().catch(() => null);
+    if (out) return out;
+    if (i < tries - 1) await new Promise((r) => setTimeout(r, 300));
+  }
+  return null;
 }
 
 export default {
@@ -38,6 +67,10 @@ export default {
     const url = new URL(req.url);
     if (url.pathname === "/health" || url.pathname.startsWith("/health/")) return new Response("ok");
     if (url.pathname !== "/mcp" && url.pathname !== "/") return new Response("not found", { status: 404 });
+    // Handing initialize a session id puts Telnyx's client in stateful Streamable-HTTP mode: it
+    // sends DELETE to end the session, and a 405 here made it tear down and re-initialize in a
+    // loop without ever calling a tool. Acknowledge the teardown.
+    if (req.method === "DELETE") return new Response(null, { status: 200 });
     if (req.method !== "POST") return new Response("method not allowed", { status: 405, headers: { allow: "POST" } });
     const log = makeLogger("mcp", env);
     const claims = await authenticate(req, env);
@@ -51,6 +84,9 @@ export default {
 
     switch (msg.method) {
       case "initialize":
+        // No session id here: a stateful client (one that echoes Mcp-Session-Id) turned out to
+        // tear its session down every ~10 s and never call a tool, with the model left printing
+        // tool calls as text (DEBUGLOG #16). Stateless, traceparent-based identity is what works.
         return rpc(msg.id, { protocolVersion: msg.params?.protocolVersion ?? "2025-06-18", capabilities: { tools: { listChanged: false } }, serverInfo: SERVER });
       case "ping":
         return rpc(msg.id, {});
@@ -64,7 +100,11 @@ export default {
         try {
           const out = await tool.run({ env, claims, log }, msg.params?.arguments ?? {});
           const outcome = (out as any).held === false || (out as any).confirmed === false || (out as any).verified === false ? "declined" : "ok";
-          log.span({ trace: claims.trace, op: `tool:${name}`, outcome, ms: Date.now() - t0, detail: JSON.stringify(msg.params?.arguments ?? {}).slice(0, 120) });
+          // Booking codes and last names are the two factors verify_booking asks for: they are
+          // never written to trace spans.
+          const args: Record<string, unknown> = msg.params?.arguments ?? {};
+          const detail = JSON.stringify(Object.fromEntries(Object.entries(args).map(([k, v]) => [k, /code|last_name/i.test(k) ? "redacted" : v]))).slice(0, 120);
+          log.span({ trace: claims.trace, op: `tool:${name}`, outcome, ms: Date.now() - t0, detail });
           env.METRICS.idFromName("global").callUpdated(claims.trace, name, outcomeFor(name, out)).catch(() => {});
           return rpc(msg.id, { content: [{ type: "text", text: JSON.stringify(out) }] });
         } catch (e: any) {

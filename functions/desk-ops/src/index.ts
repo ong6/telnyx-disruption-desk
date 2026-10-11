@@ -15,7 +15,7 @@ const ROUTES = [["SIN", "HKG"], ["SIN", "NRT"]];
 const json = (b: unknown, status = 200) => Response.json(b, { status, headers: { "cache-control": "no-store" } });
 
 const pssFetch = (path: string, init: RequestInit = {}) =>
-  fetch(`${URLS.pss}${path}`, { ...init, headers: { authorization: `Bearer ${process.env.PSS_API_KEY}`, "content-type": "application/json" } }).then(async (r) => {
+  fetch(`${URLS.pss}${path}`, { ...init, signal: AbortSignal.timeout(5_000), headers: { authorization: `Bearer ${process.env.PSS_API_KEY}`, "content-type": "application/json" } }).then(async (r) => {
     if (!r.ok) throw new Error(`pss ${r.status} ${path}: ${(await r.text()).slice(0, 200)}`);
     return r.json() as Promise<any>;
   });
@@ -34,13 +34,22 @@ export default {
     if (path === "/" && req.method === "GET") return new Response(CONSOLE_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
 
     try {
+      // Anonymous viewers get the operational picture (flags, flights, canary) but not passenger
+      // data: trips, call traces and the callback queue carry booking codes, names and references.
+      if (path === "/api/state" && !isAdmin(req, url)) {
+        const s: any = await state(env);
+        return json({ now: s.now, stateBuildMs: s.stateBuildMs, degraded: s.degraded, flags: s.flags, scenario: s.scenario, flights: s.flights, canary: s.canary, surge: s.surge ? { running: s.surge.running } : null, metrics: { latency: s.metrics?.latency } });
+      }
       if (path === "/api/state") return json(await state(env));
       // Read by the workflow's handoff gate (a tool node): 200 = a person can take the call.
       if (path === "/api/queue") {
         const { flags } = await readConfig(env);
         return json({ queue: flags.human_queue }, flags.human_queue === "full" ? 409 : 200);
       }
-      if (path.startsWith("/api/trace/")) return json(await trace(env, path.split("/")[3]));
+      if (path.startsWith("/api/trace/")) {
+        if (!isAdmin(req, url)) return json({ error: "admin token required" }, 401);
+        return json(await trace(env, path.split("/")[3]));
+      }
 
       if (!isAdmin(req, url)) return json({ error: "admin token required" }, 401);
       const body: any = req.method === "POST" ? await req.json().catch(() => ({})) : {};
@@ -127,9 +136,17 @@ async function syncAssistantDefaults(env: any, log: ReturnType<typeof makeLogger
   const patch = { disruption_mode: flags.disruption_mode, human_queue: flags.human_queue, incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "" };
   const headers = { authorization: `Bearer ${process.env.DESK_TELNYX_KEY}`, "content-type": "application/json" };
   await Promise.all(ids.map(async (id) => {
-    const cur = await (await fetch(`https://api.telnyx.com/v2/ai/assistants/${id}`, { headers })).json() as any;
+    const curRes = await fetch(`https://api.telnyx.com/v2/ai/assistants/${id}`, { headers });
+    if (!curRes.ok) {
+      // Never PATCH on a failed read: the response body would have no dynamic_variables and the
+      // spread would replace every assistant default with just the flags, destroying the
+      // documented cold-webhook fallback precisely while the API is unhealthy.
+      log.error("assistant_defaults", { id, stage: "read", status: curRes.status });
+      return;
+    }
+    const cur = (await curRes.json()) as any;
     const res = await fetch(`https://api.telnyx.com/v2/ai/assistants/${id}`, { method: "POST", headers, body: JSON.stringify({ dynamic_variables: { ...(cur.dynamic_variables ?? cur.data?.dynamic_variables ?? {}), ...patch } }) });
-    log.info("assistant_defaults", { id, status: res.status, ...patch, incident_notice: patch.incident_notice ? "set" : "" });
+    (res.ok ? log.info : log.error)("assistant_defaults", { id, status: res.status, ...patch, incident_notice: patch.incident_notice ? "set" : "" });
   }));
   return patch;
 }
@@ -163,20 +180,27 @@ async function state(env: any) {
     ...["NB862", "NB866", "NB868"].flatMap((n) => [0, 1, 2].map((d) => flightId(n, addDays(base, d)))),
     flightId(RELIEF_FLIGHT.number, addDays(base, RELIEF_FLIGHT.day)),
   ])];
+  const t0 = Date.now();
+  const degrade = (name: string, p: Promise<unknown>) => p.catch(() => (degraded.push(name), null));
+  const degraded: string[] = [];
   const [flights, metrics, canary, surge] = await Promise.all([
-    Promise.all(ids.map((id) => env.FLIGHT.idFromName(id).snapshot().catch(() => null))),
-    env.METRICS.idFromName("global").summary(15),
-    env.CANARY.idFromName("main").runs(),
-    env.SURGE.idFromName("main").state().catch(() => null),
+    degrade("flights", Promise.all(ids.map((id) => env.FLIGHT.idFromName(id).snapshot()))),
+    degrade("metrics", env.METRICS.idFromName("global").summary(15)),
+    degrade("canary", env.CANARY.idFromName("main").runs()),
+    degrade("surge", env.SURGE.idFromName("main").state()),
   ]);
-  const trips = await Promise.all(BOOKINGS.map((b) => env.TRIP.idFromName(b.code).get().catch(() => null)));
-  const callbacks = (metrics.callbacks ?? []).map((c: any) => ({ ...c, caller: maskPhone(c.caller) }));
+  const trips = await Promise.all(BOOKINGS.map((b) => degrade("trips", env.TRIP.idFromName(b.code).get())));
+  const callbacks = (((metrics as any)?.callbacks ?? []) as any[]).map((c) => ({ ...c, caller: maskPhone(c.caller) }));
   return {
     now: Date.now(),
+    // An operator should see at a glance when the console itself is reading a broken subsystem
+    // instead of silently showing blanks (a dead actor host showed up as 6-second polls first).
+    degraded: degraded.length ? degraded : undefined,
+    stateBuildMs: Date.now() - t0,
     flags,
     scenario,
-    flights: flights.filter(Boolean).sort((a: any, b: any) => (a.date + a.dep).localeCompare(b.date + b.dep)),
-    trips: trips.filter(Boolean).map((t: any) => ({
+    flights: ((flights as any[]) ?? []).filter(Boolean).sort((a: any, b: any) => (a.date + a.dep).localeCompare(b.date + b.dep)),
+    trips: ((trips as any[]) ?? []).filter(Boolean).map((t: any) => ({
       code: t.booking.code, name: `${t.booking.firstName} ${t.booking.lastName}`, pax: t.booking.pax, phone: maskPhone(t.booking.phone),
       status: t.status, hold: t.hold, rebookedTo: t.rebookedTo, refund: t.refund, waitlist: t.waitlist, callback: t.callback, calls: t.calls, events: t.events.slice(-4),
     })),

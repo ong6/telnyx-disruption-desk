@@ -20,7 +20,6 @@ type Tool = { description: string; inputSchema: object; run: (ctx: ToolCtx, args
 
 const city = (iata: string) => AIRLINE.cities[iata] ?? iata;
 const policyMemo = new Map<string, { at: number; text: string }>();
-const MAX_VERIFY_ATTEMPTS = 3;
 
 const session = (ctx: ToolCtx) => ctx.env.CALL.idFromName(ctx.claims.trace);
 
@@ -86,16 +85,14 @@ export const TOOLS: Record<string, Tool> = {
       required: ["booking_code", "last_name"],
     },
     async run(ctx, { booking_code, last_name }) {
-      const { fails } = await session(ctx).get();
-      if (fails >= MAX_VERIFY_ATTEMPTS) return { verified: false, attempts_left: 0, next: "transfer the caller to a person" };
+      const left = await session(ctx).attemptsLeft();
+      if (left <= 0) return { verified: false, attempts_left: 0, next: "transfer the caller to a person" };
       const code = String(booking_code ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
       const b = code ? await pss(ctx.env, ctx.claims.trace, ctx.log).booking(code) : null;
       const ok = !!b && b.last_name.toLowerCase() === String(last_name ?? "").trim().toLowerCase();
       if (!ok) {
-        await session(ctx).fail();
         if (b) await trip(ctx, b.code).verifyFailed();
-        const left = MAX_VERIFY_ATTEMPTS - fails - 1;
-        return { verified: false, attempts_left: left, next: left > 0 ? "ask the caller to check the code and try again" : "transfer the caller to a person" };
+        return { verified: false, attempts_left: await session(ctx).fail(), next: "ask the caller to check the code and try again" };
       }
       await session(ctx).bind(b!.code);
       return { verified: true, ...(await caseSummary(ctx, b!)) };
@@ -143,11 +140,12 @@ export const TOOLS: Record<string, Tool> = {
       // Never wait on a KV read mid-conversation: last known flags, refreshed in the background.
       const ttl = (await readConfigFast(ctx.env, 300))?.flags.hold_ttl_secs ?? 600;
       const t: TripState | null = await trip(ctx, b.code).get();
-      if (t?.hold && t.hold.flightId !== flight_id) await flight(ctx, t.hold.flightId).release(t.hold.holdId);
+      // Hold the new flight first: if it just filled up, the caller keeps the hold they have.
       const r = await flight(ctx, flight_id).hold(b.code, b.pax, ttl);
       if (!r.ok) {
         return { held: false, reason: r.reason, seats_left: r.seatsLeft, next: "say that flight just filled up, then offer the next option from find_alternatives" };
       }
+      if (t?.hold && t.hold.flightId !== flight_id) await flight(ctx, t.hold.flightId).release(t.hold.holdId);
       await trip(ctx, b.code).held(flight_id, r.holdId, r.expiresAt);
       return { held: true, flight_id, passengers: b.pax, minutes_to_confirm: Math.round((r.expiresAt - Date.now()) / 60000), next: "read back the flight and ask the caller to confirm" };
     },
@@ -194,8 +192,11 @@ export const TOOLS: Record<string, Tool> = {
       if (orig?.status !== "cancelled" && orig?.status !== "delayed")
         return { refunded: false, reason: "not_eligible", next: "explain the fare is non-refundable for a voluntary cancellation; offer to change the flight instead" };
       const t: TripState | null = await trip(ctx, b.code).get();
-      if (t?.hold) await flight(ctx, t.hold.flightId).release(t.hold.holdId);
       const { refund_ref } = await pss(ctx.env, ctx.claims.trace, ctx.log).refund(b.code, String(reason ?? "flight disrupted"));
+      // Only free seats once the refund actually went through, and free whatever the caller was
+      // holding or was rebooked onto, so neither a live hold nor confirmed seats leak.
+      if (t?.hold) await flight(ctx, t.hold.flightId).release(t.hold.holdId);
+      if (t?.rebookedTo) await flight(ctx, t.rebookedTo.flightId).returnSeats(b.code, b.pax).catch(() => {});
       await trip(ctx, b.code).refunded(refund_ref);
       return {
         refunded: true, refund_reference: refund_ref, spelled: spell(refund_ref), timeline: "back on the original card within 7 business days",

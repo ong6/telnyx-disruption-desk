@@ -22,18 +22,24 @@ export function pss(env: any, trace: string, log?: { span: (s: any) => void }) {
     if (cacheSecs && init.method === undefined) {
       const hit = memo.get(path);
       if (hit && Date.now() - hit.at < hit.ttl * 1000) {
-        log?.span({ trace, op: "mem:pss_cache", outcome: "hit", ms: Date.now() - t0, detail: path });
+        log?.span({ trace, op: "mem:pss_cache", outcome: "hit", ms: Date.now() - t0, detail: path.replace(/(?<=\/v1\/bookings\/)[^/?]+/, "***").replace(/phone=[^&]+/, "phone=***") });
         return JSON.parse(hit.text) as T;
       }
     }
     const res = await fetch(`${URLS.pss}${path}`, {
       ...init,
+      // A wedged reservation system must fail fast, not hang every tool call until Telnyx's
+      // own tool timeout burns the caller's hold TTL.
+      signal: AbortSignal.timeout(5_000),
       headers: { authorization: `Bearer ${process.env.PSS_API_KEY}`, "content-type": "application/json", "x-trace-id": trace, ...(init.headers ?? {}) },
     });
     const text = await res.text();
-    log?.span({ trace, op: `pss:${init.method ?? "GET"}`, outcome: res.ok ? "ok" : res.status === 404 ? "not_found" : "error", ms: Date.now() - t0, detail: path });
+    // Booking codes sit in the request path and phone numbers in the query; neither reaches a
+    // trace span, which the operator's console can render.
+    const pathForTrace = path.replace(/(?<=\/v1\/bookings\/)[^/?]+/, "***").replace(/phone=[^&]+/, "phone=***");
+    log?.span({ trace, op: `pss:${init.method ?? "GET"}`, outcome: res.ok ? "ok" : res.status === 404 ? "not_found" : "error", ms: Date.now() - t0, detail: pathForTrace });
     if (res.status === 404) return null as T;
-    if (!res.ok) throw new Error(`pss ${res.status} ${path}: ${text.slice(0, 200)}`);
+    if (!res.ok) throw new Error(`pss ${res.status} ${pathForTrace.split("?")[0]}: ${text.slice(0, 200)}`);
     if (cacheSecs && init.method === undefined) memo.set(path, { at: Date.now(), ttl: cacheSecs, text });
     if (init.method !== undefined) memo.clear(); // a write may change what reads return
     return JSON.parse(text) as T;

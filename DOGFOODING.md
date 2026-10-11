@@ -12,7 +12,12 @@ This build was made with two AI coding tools, and the line between them is state
   - the unit tests for the pure modules (`tests/shared.test.ts`);
   - the unit tests for the seat-inventory actor (`tests/flight.test.ts`).
 - **From 2026-10-11 on**, changes go through OpenCode on Telnyx models. Claude Code writes the task
-  and reviews the result. Commit trailers name the model that wrote each change.
+  and reviews the result. Commits are attributed to OpenCode (`opencode <opencode@opencode.ai>`),
+  and the trail of what each model wrote lives in this file, since git carries only one identity.
+- **The 10-11 October session ran entirely on OpenCode** (GLM-5.3-Flash): the actor-host crash
+  (#14), the booking-overwrite bug (#15), the stateful-session experiment and revert (#16), the
+  chat-handoff finding (#17), the flow and prompt fixes, the review-loop fixes, and this
+  documentation.
 - **Telnyx-hosted models run the product:** Kimi-K2.6 runs both desks. GLM-5.2 was tried for the
   Mandarin Desk.
 

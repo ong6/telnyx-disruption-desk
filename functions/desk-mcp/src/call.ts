@@ -4,16 +4,27 @@
 // verification attempt counter: read-modify-write, so an actor, not KV.
 import { StatefulActor } from "@telnyx/edge-runtime";
 
+export const MAX_VERIFY_ATTEMPTS = 3;
+// A conversation lives minutes; the trace link only needs to outlive it a little. The alarm
+// clears the actor so per-turn chat traces and MCP session keys don't pile up forever.
+const TTL_MS = 2 * 60 * 60 * 1000;
+
 export interface CallBinding { caller: string; booking: string; fails: number; at: number; canonical?: string }
 
 export class CallSession extends StatefulActor {
   async get(): Promise<CallBinding> {
     return (await this.ctx.storage.get<CallBinding>("s")) ?? { caller: "", booking: "", fails: 0, at: 0 };
   }
-  /** Called by the webhook at the start of the conversation. */
+  /**
+   * Called by the webhook at the start of the conversation. On a call that is once; in chat it
+   * runs every turn, so a booking found by caller ID must never overwrite one the caller proved
+   * with verify_booking earlier in the same conversation (a refund once landed on the caller's
+   * own booking that way — DEBUGLOG #15). The verified binding wins.
+   */
   async start(caller: string, booking: string): Promise<void> {
     const s = await this.get();
-    await this.ctx.storage.put("s", { ...s, caller, booking: booking || s.booking, at: Date.now() });
+    await this.ctx.storage.put("s", { ...s, caller, booking: s.booking || booking, at: Date.now() });
+    await this.arm();
   }
   /**
    * Telnyx starts a new W3C trace per turn and opens the MCP session on whichever turn first
@@ -23,15 +34,36 @@ export class CallSession extends StatefulActor {
   async link(canonical: string): Promise<void> {
     const s = await this.get();
     await this.ctx.storage.put("s", { ...s, canonical, at: Date.now() });
+    await this.arm();
   }
   /** Called by verify_booking once an unrecognised caller proves the booking. */
   async bind(booking: string): Promise<void> {
     const s = await this.get();
-    await this.ctx.storage.put("s", { ...s, booking });
+    await this.ctx.storage.put("s", { ...s, booking, at: Date.now() });
+    await this.arm();
   }
+  /** Count one failed verification; the actor is single-threaded, so the counter is exact.
+   *  Returns the attempts the caller has left (0 means locked out for this conversation). */
   async fail(): Promise<number> {
     const s = await this.get();
-    await this.ctx.storage.put("s", { ...s, fails: s.fails + 1 });
-    return s.fails + 1;
+    const fails = s.fails + 1;
+    await this.ctx.storage.put("s", { ...s, fails, at: Date.now() });
+    await this.arm();
+    return Math.max(0, MAX_VERIFY_ATTEMPTS - fails);
+  }
+  /** How many attempts are left before the lockout, without counting one. */
+  async attemptsLeft(): Promise<number> {
+    return Math.max(0, MAX_VERIFY_ATTEMPTS - (await this.get()).fails);
+  }
+  private async arm(): Promise<void> {
+    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + TTL_MS);
+  }
+  async alarm(): Promise<void> {
+    const s = await this.get();
+    if (Date.now() - (s.at ?? 0) < TTL_MS) {
+      await this.ctx.storage.setAlarm(Date.now() + TTL_MS);
+      return;
+    }
+    await this.ctx.storage.deleteAll();
   }
 }

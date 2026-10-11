@@ -17,7 +17,7 @@ export interface Scenario {
   loadedAt: number;
 }
 
-const DEFAULTS: Flags = { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "on" };
+const DEFAULTS: Flags = { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "off" };
 let cache: { at: number; flags: Flags; scenario: Scenario | null } | null = null;
 
 export async function readConfig(env: any, force = false): Promise<{ flags: Flags; scenario: Scenario | null }> {

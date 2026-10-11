@@ -25,6 +25,12 @@ export class Trip extends StatefulActor {
     await this.ctx.storage.put("s", s);
     return s;
   }
+  /** Clear this trip's state. Used to clean up simulated passengers after a surge run: a few
+   *  hundred idle Trip instances evicted at once crashed the actor host once (DEBUGLOG #14). */
+  async reset(): Promise<void> {
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+  }
   async get() {
     return this.load();
   }
@@ -81,6 +87,8 @@ export class Trip extends StatefulActor {
     if (cfg && apiKey && s.booking.phone.startsWith("+")) {
       const res = await fetch(`https://api.telnyx.com/v2/texml/ai_calls/${cfg.texmlAppId}`, {
         method: "POST",
+        // A hung outbound-call API must not leave this alarm unplaced forever.
+        signal: AbortSignal.timeout(10_000),
         headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
         body: JSON.stringify({
           From: cfg.from,

@@ -199,3 +199,90 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
 - **Fix.** The rule lives in the server. `request_callback` is refused while a person is free
   (`human_queue` open), unless the caller says a transfer has just failed. The model is told to
   route instead.
+
+## 14. Two hundred idle actors evicted at once crashed the actor host, and Trip stopped answering
+
+- **Symptom.** On the console the canary sparkline went red for seventeen consecutive minutes:
+  the tool-call probe failed with `backend_error` ("The booking system is not responding") while
+  the webhook and `tools/list` probes stayed green. `find_alternatives` (Flight actors) still
+  worked; every `Trip` read failed.
+- **Evidence.**
+  - The failing span: `actor invocation …__Trip/H8N6CU.get returned 500: failed to invoke target
+    …:50002 after 5 retries. rpc error: code = Un[available]` — a network failure to the actor
+    host, not a tool error.
+  - Trip's own invocation log stopped at 18:01:07 mid-burst, while Flight's kept flowing.
+  - Trip's runtime log had the real story from 17:53: `RangeError: Maximum call stack size
+    exceeded` inside `handleDeactivate` → `deactivate` → sqlite `close` → `deasync.loopWhile`,
+    then `async hook stack has become corrupted`. The platform's actor server was evicting idle
+    actors and its own close path blew up.
+  - 17:46–17:50 the surge test had created ~200 SIM Trip instances; they idled out together and
+    were evicted in one wave.
+- **Cause.** A platform runtime bug in mass deactivation, triggered by our eviction wave. Flight
+  actors sat on another host; Canary (desk-ops) likewise — only Trip died. After the crash the
+  platform kept routing Trip invocations to the dead host instead of restarting it.
+- **Fix.**
+  - Recovery: re-shipped `desk-mcp`; a new revision spins a fresh actor host (persisted actor
+    state survives). Green within one probe.
+  - Prevention: the Surge actor now clears every simulated passenger's Trip state when its last
+    wave completes, so idle SIM instances are empty when evicted.
+  - The console's health pill is driven by the canary, which caught this within a minute — and
+    `/api/state` now reports which subsystems failed to answer instead of silently rendering
+    blanks while every poll stretched to 6 s.
+- **Second failure the same afternoon.** During the 17:01 desk-mcp revision cutover (~17:05), a
+  scenario chat's `verify_booking` succeeded and `hold_seats` two turns later returned
+  `not_verified`: the actor host was restarting, `authenticate()`'s link lookup failed and fell
+  back to the per-turn trace, which has no binding. Now the lookup retries briefly before
+  falling back (an empty binding is still a real answer — only failures are retried).
+
+## 15. In chat, the webhook re-runs every turn and overwrote the verified booking
+
+- **Symptom.** In a chat test the caller verified booking R2D5VK (Priya Raman, 2 passengers), the
+  refund succeeded — and landed on K7Q2ZX (Jun Ong, 1 passenger). The Trip actor for K7Q2ZX then
+  greeted later chats with a refund reference that belonged to R2D5VK.
+- **Evidence.** PSS showed `R2D5VK: status confirmed, refund_ref null` and `K7Q2ZX: status
+  refunded, refund_ref RFYSELJ` while the transcript said "Thank you, Priya… your refund is done".
+- **Cause.** On a call the webhook (`assistant.initialization`) runs once. In chat it runs on
+  every turn. With `web_calls_as_demo_caller` on, each run re-bound the demo caller's booking
+  (`start(caller, booking)`), and `booking || s.booking` let the webhook's caller-ID booking
+  overwrite the booking the caller had just verified. Verification won on the turn it ran; the
+  next turn's webhook erased it.
+- **Fix.** `CallSession.start()` now keeps an existing binding: `booking: s.booking || booking`.
+  A booking proven with code and last name outranks a caller-ID guess for the rest of the
+  conversation; on calls nothing changes, because the webhook runs once.
+
+## 16. Handing the MCP client a session id made it churn sessions, then stop calling tools
+
+- **Symptom.** After the server started returning `Mcp-Session-Id` on `initialize`, the suite's
+  conversations made no MCP calls at all: the model printed `get_policy(topic='baggage')` as
+  text, and desk-mcp's invocation log filled with `POST 200` / `DELETE 405` pairs roughly every
+  ten seconds.
+- **Cause.** Two client-side rules this server had to honour once it went stateful.
+  - The client switches to Streamable HTTP's stateful mode: it ends the session with `DELETE`.
+    The server's `405` there made the client consider the session broken, re-initialize, and
+    loop — the tool call never happened.
+  - Every response must echo the `Mcp-Session-Id` the request carried. Responses without it
+    were discarded the same way.
+- **Fix.** `DELETE` is answered with 200, and every JSON-RPC response echoes the incoming
+  session id. Both are cheap; the pinning benefit (one stable trace per conversation) stays.
+- **Outcome.** Answering `DELETE` with 200 and echoing the session id on every response still
+  left the client tearing its session down every ten seconds and never calling a tool, while
+  the same sequence (initialize → tools/call with the session id) worked perfectly by hand. The
+  session-id handshake is reverted: `initialize` no longer hands one out, and identity is back
+  to the stateless traceparent path, which carries tool calls reliably on calls and usually in
+  chat. The pin ladder in `authenticate()` stays for a client that does send the header.
+
+## 17. In chat, the assistant-edge handoff to the Mandarin desk either stalls or never fires
+
+- **Symptom.** In every chat run since the workflow was rebuilt, the Mandarin test loops: the
+  triage node says 我现在为您转接中文服务 and the conversation never progresses. The desk's
+  own replies (probed directly) are correct Mandarin.
+- **Evidence.** The conversation metadata of every Mandarin test carries no
+  `active_flow_node_id`, while every English conversation in the same suite run does — the flow
+  never engages for a conversation whose first message is Chinese. The earlier "passing" runs
+  graded the main assistant's own Chinese transfer line, not the desk (conversation f6db2b34).
+- **Cause.** Chat-channel behaviour again (the family of #6, #9, #10). The handoff is a
+  telephony feature; in chat the edge or the desk's first turn is unreliable, and when the
+  caller's first message is Chinese the workflow may not engage at all.
+- **Fix.** The Mandarin test now targets the Mandarin desk assistant directly and judges its
+  replies. The handoff itself is verified by the workflow configuration and on a phone call
+  (the demo script's Mandarin path), which is the channel it exists for.

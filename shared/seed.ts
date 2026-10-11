@@ -39,7 +39,7 @@ export const AIRLINE = { name: "Nimbus Air", code: "NB", cities: { SIN: "Singapo
 export const INCIDENTS: Record<string, { notice: string; cancels: { flight: string; day: number }[] }> = {
   typhoon: {
     notice:
-      "Typhoon Koinu has closed Hong Kong International Airport. All Nimbus Air flights from Singapore to Hong Kong today are cancelled. You can move to another flight or get a full refund, free of charge.",
+      "Typhoon Koinu has closed Hong Kong International Airport. All Nimbus Air flights from Singapore to Hong Kong today are cancelled.",
     cancels: [
       { flight: "NB862", day: 0 },
       { flight: "NB866", day: 0 },

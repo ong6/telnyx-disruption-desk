@@ -42,24 +42,26 @@ export default {
     const log = makeLogger("dv", env);
     const t0 = Date.now();
     const raw = await req.text();
-    const body = JSON.parse(raw || "{}");
-    const p = body?.data?.payload ?? {};
-    const channel: string = p.telnyx_conversation_channel ?? "unknown";
-    const callId: string = p.call_control_id ?? p.telnyx_conversation_id ?? body?.data?.id ?? `${Date.now()}`;
-    // Telnyx's W3C trace id is our trace id: its MCP client sends the same one, so the webhook,
-    // the MCP tool calls and everything they touch land in one trace.
-    // Later webhook calls in the same conversation echo earlier variables: keep the first trace id.
-    const trace = /^[0-9a-f]{32}$|^c[0-9a-f]{12}$/.test(p.trace_id ?? "")
-      ? p.trace_id
-      : traceFrom(req.headers.get("traceparent"), `c${createHash("sha1").update(callId).digest("hex").slice(0, 12)}`);
-    const signed = signatureValid(req, raw);
-    const turnTrace = traceFrom(req.headers.get("traceparent"), "");
-
     try {
+      // A malformed body must not 500 the one hop that must never fail: the parse sits inside
+      // the fail-soft try, so the fallback variable set at the bottom always goes out.
+      const body = JSON.parse(raw || "{}");
+      const p = body?.data?.payload ?? {};
+      const channel: string = p.telnyx_conversation_channel ?? "unknown";
+      const callId: string = p.call_control_id ?? p.telnyx_conversation_id ?? body?.data?.id ?? `${Date.now()}`;
+      // Telnyx's W3C trace id is our trace id: its MCP client sends the same one, so the webhook,
+      // the MCP tool calls and everything they touch land in one trace.
+      // Later webhook calls in the same conversation echo earlier variables: keep the first trace id.
+      const trace = /^[0-9a-f]{32}$|^c[0-9a-f]{12}$/.test(p.trace_id ?? "")
+        ? p.trace_id
+        : traceFrom(req.headers.get("traceparent"), `c${createHash("sha1").update(callId).digest("hex").slice(0, 12)}`);
+      const signed = signatureValid(req, raw);
+      const turnTrace = traceFrom(req.headers.get("traceparent"), "");
+
       // Flags come from memory; on a cold process we don't wait for KV past the budget and leave
       // the flag variables out, so the assistant's own defaults (kept in sync by desk-ops) apply.
       const cfg = await readConfigFast(env, 500);
-      const flags = cfg?.flags ?? { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "on" as const };
+      const flags = cfg?.flags ?? { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "off" as const };
       const scenario = cfg?.scenario ?? null;
       let caller: string = p.telnyx_end_user_target ?? "";
       if (!caller.startsWith("+") && channel !== "phone_call" && flags.web_calls_as_demo_caller === "on") caller = process.env.DEMO_CALLER_NUMBER ?? "";
@@ -119,6 +121,7 @@ export default {
     } catch (e: any) {
       // Fail soft: an anonymous call is better than a dead line. The error is visible in logs,
       // the trace and the console's error tile.
+      const trace = traceFrom(req.headers.get("traceparent"), `dv-${Date.now()}`);
       log.span({ trace, op: "webhook", outcome: "error", ms: Date.now() - t0, detail: String(e?.message ?? e).slice(0, 200) });
       return Response.json({
         // Flag variables are left out so the assistant's defaults (synced by desk-ops) apply.

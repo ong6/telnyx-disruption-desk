@@ -144,6 +144,15 @@ KV told every caller they had a seat and recorded one: last write wins. The acto
 This proves backend contention, not 300 live phone calls. Call concurrency is the platform's job,
 and the trial account caps outbound calls at 2.
 
+## Scenario suite status
+
+Telnyx's assistant-test runner is chat-only, and chat is not the product channel: across the
+afternoon the same seven tests passed in rotating combinations while the fixes landed and the
+simulated caller's turn-taking varied (DEBUGLOG #8, #17). The final run on the finished build is
+[7/7](docs/evidence/tests-2026-10-11-08-25.md); [the
+summary](docs/evidence/suite-summary-2026-10-11.md) shows every run and what it taught, and the
+canary — which watches the real phone path — stayed green throughout.
+
 ## How it meets the brief
 
 | Requirement | Where |
@@ -184,12 +193,15 @@ and the trial account caps outbound calls at 2.
 - **Knowing within a minute.** The `Canary` actor's alarm runs every 60 s: it calls the webhook,
   MCP `tools/list` and a real tool call, the way Telnyx does. The console's health pill goes red
   when the last good probe is older than 90 s or any probe fails, and the "tool errors (1 min)"
-  tile counts live failures.
+  tile counts live failures. The console also reports its own health: how long it took to read
+  its state and which subsystems failed to answer, instead of silently rendering blanks — that
+  is how a dead actor host showed up as six-second polls before anything else noticed.
 - **What I'd look at first.**
   1. The failing call's trace, to see which hop.
   2. `telnyx-edge logs <fn> --type invocations --json`: status, duration, response size and
      region per request. That's how bug #7 was found.
-- **Debugging trail.** [DEBUGLOG.md](DEBUGLOG.md): eight real bugs, each with its evidence.
+- **Debugging trail.** [DEBUGLOG.md](DEBUGLOG.md): every entry is a real bug with its evidence —
+  the count grows as the platform surprises continue.
 
 ## Run it yourself
 
@@ -219,3 +231,16 @@ Infrastructure (created once): KV namespace `desk-kv`, SQL database `desk-pss`, 
   hash.
 - **Chat isn't the product channel.** Telnyx runs the webhook later in chat than on calls
   (DEBUGLOG #6), so the opening branch is tested by phone.
+- **Demo conveniences, named as such.** The ops console's read endpoints (`/api/state`,
+  `/api/trace`) now take the operator key; `/api/queue` stays open because the workflow's
+  handoff-gate tool node carries no credentials. The admin token is accepted as a `?key=`
+  parameter so the console link can be shared with one click. `desk-mcp`'s admin-token path
+  (`x-test-booking`) lets the test harness act on any booking — it is guarded by that token.
+  `web_calls_as_demo_caller` defaults to off; the operator turns it on for browser demos, and
+  every web caller is then treated as the demo passenger until they verify their own booking.
+- **Deployed IDs are baked in.** Function URLs live in `shared/endpoints.ts`, assistant and tool
+  IDs in `assistant/build.mjs`; a fresh Telnyx org re-runs `build.mjs` and updates those two
+  files.
+- **Policy documents in Cloud Storage are uploaded by hand** (no S3 keys in the repo), so the
+  wording fixed in `content/policies/vouchers.md` needs a manual bucket update to reach
+  `get_policy`.
