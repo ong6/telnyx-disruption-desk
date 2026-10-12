@@ -456,9 +456,12 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
   and `== 200` (chat sends a number). On a call, one bad comparison may sink the whole
   expression, so the edge never matched and the default edge won.
 - **Change.** Two edges instead, one per form, as the docs show them.
-- **Status: not yet proven on a call.** A transfer dials a real phone, so the test points the
-  transfer tool at an AI's SIP address first. The first such test ran during the KV outage: the
-  queue check got a 500, and the callback was correct.
+- **Proven on a call.** A transfer dials a real phone, so the test pointed the transfer tool at
+  an AI's SIP address first. The first try ran during the KV outage: the queue check got a 500,
+  and the callback was correct. The second (conversation ac3e42c3) went gate, queue `open`,
+  transfer node, and the transfer ran. The test target hung up during the transfer, so the
+  transfer node's fallback edge offered a callback and booked it, which proves that path too.
+  The tool was restored to the human desk number with `build.mjs`.
 
 ## 25. Open: in a parallel chat run, one conversation's tools acted on two bookings
 

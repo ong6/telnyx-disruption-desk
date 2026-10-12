@@ -205,7 +205,7 @@ Results on the finished build (Oct 12–13; Telnyx KV was failing on and off at 
 | Cancel an operating flight: travel credit | pass | — |
 | Mandarin handoff | pass | pass (desk direct) |
 | Family of four, three failed verifications, baggage policy, ask for a person | — | pass ([run](docs/evidence/tests-2026-10-12-17-05.md)) |
-| Ask for a person on a call, with the queue full (callback) or open (transfer) | not yet: needs KV for the queue flag | — |
+| Ask for a person on a call: queue open → transfer (the transfer pointed at an AI for the test); transfer fails or queue can't be checked → callback | pass (DEBUGLOG #24) | pass |
 
 The chat suite's scenario reset failed on that run (KV), so two tests ran on state the voice runs had
 already changed. One chat conversation also shows tool calls acting on two different bookings,
