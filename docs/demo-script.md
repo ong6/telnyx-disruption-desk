@@ -23,9 +23,13 @@ the MCP `get_policy` tool. Hang up.
 2. Call from the browser:
    - the disclosure and the typhoon notice play (one verbatim speak node);
    - the assistant opens with "your NB866 today is cancelled".
-3. "Move me to the earliest flight." It offers two options, holds a seat, reads back the flight and
-   asks for a yes. Confirm and get the code letter by letter.
+3. "Move me to the earliest flight." It offers one option per turn, holds a seat, reads back the
+   flight and passengers by name, and asks for a yes. Confirm and get the code letter by letter.
+   During tool waits you'll hear a short filler ("Let me check that for you") — that's on purpose:
+   measured turns are 4-5 s and the caller never hears dead air.
 4. On the console:
+   - the Live calls ticker shows this call's flow (webhook → verify → options → hold → confirm)
+     as it happens;
    - the surge panel counts rebooked, waitlisted and races lost;
    - the board drains;
    - click your call's trace: webhook, actors, each MCP tool and the reservation system, all under
@@ -63,6 +67,12 @@ the phone rings: "a seat opened up and it's held for you".
   never chooses whose booking to change (DEBUGLOG #8).
 - **Observability:** JSON logs, spans, the Metrics actor and the canary. How I'd know within a
   minute (the canary goes red), and what I'd look at first (that call's trace).
-- **The hardest bug:** the webhook answering in 2.3 s while Telnyx had already given up at 1.2 s.
-  Found from `response_size_bytes: 0` in the invocation log (DEBUGLOG #7).
+- **The hardest bug:** the Trip actor host died under a mass eviction of idle actors and the
+  platform kept routing to the dead container; the canary caught it within a minute, the actor
+  runtime's own logs showed the stack overflow, and the recovery was a re-ship (DEBUGLOG #14).
+  Alternate story: the webhook answering in 2.3 s while Telnyx had already given up at 1.2 s,
+  found from `response_size_bytes: 0` in the invocation log (DEBUGLOG #7).
+- **The dead-air story:** the same build, measured — backend hops are milliseconds, the model was
+  the seconds-long cost, and a real caller hung up in the silence. Model switched on evidence,
+  fillers added, turns now 4-5 s (DEBUGLOG #18-#19).
 - **OpenCode and Telnyx Inference:** what was built with it (DOGFOODING.md).
