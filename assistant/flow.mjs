@@ -19,10 +19,17 @@ const tool = (id, name, shared_tool_id, message) => ({ id, name, type: "tool", s
 
 export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinAssistantId }) {
   const nodes = [
-    // One verbatim opening. On a call, a prompt node's expression edges only run when the caller
-    // next speaks, so a silent routing node leaves dead air (DEBUGLOG #12). The incident notice is
-    // a variable instead: empty on a normal day, the typhoon notice in disruption mode.
-    speak("n_open", "Disclosure and incident notice", "Thanks for calling Nimbus Air. This call may be recorded for quality and training, and you're speaking with our automated assistant. You can ask for a person at any time. {{incident_notice}}"),
+    // The opening is a prompt node whose model turn delivers the disclosure verbatim. It was a
+    // speak node until DEBUGLOG #20: on calls the speak opening played, then the caller spoke
+    // and no model turn ever fired — the last voice call that worked predates the speak-node
+    // restructure, and every one after it hung. Chat hid this: there the webhook runs lazily
+    // and the flow advances normally. The verbatim requirement is met by instructing the model
+    // to say exactly this text; the refund-rights statement below is still a real speak node.
+    prompt("n_open", "Disclosure and incident notice", [
+      "Deliver exactly this text as your first reply, word for word ({{incident_notice}} is empty on a normal day):",
+      '"Thanks for calling Nimbus Air. This call may be recorded for quality and training, and you\'re speaking with our automated assistant. You can ask for a person at any time. {{incident_notice}}"',
+      "Do not paraphrase, shorten or extend it. Say it, then call the transition so the conversation moves on to greet the caller.",
+    ].join("\n")),
     prompt("n_triage", "Greet & identify need", [
       "Open the conversation and find out what the caller needs.",
       "Keep this first turn to two short sentences and one question. Don't repeat the incident notice; the caller just heard it.",
@@ -74,6 +81,7 @@ export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinA
 
   // Tools per prompt node (MCP tools are listed by name; build.mjs maps them to the node).
   const scope = {
+    n_open: [],
     n_triage: [],
     n_rebook: ["verify_booking", "find_alternatives", "hold_seats"],
     n_confirm: ["confirm_rebooking"],
@@ -88,7 +96,7 @@ export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinA
   const edges = [];
   const edge = (from, to, condition) => edges.push({ id: `e${++i}_${from}_${to}`.slice(0, 60), start_node_id: from, target: to.startsWith("assistant:") ? { type: "assistant", assistant_id: to.slice(10), voice_mode: "distinct" } : { type: "node", node_id: to }, condition });
 
-  edge("n_open", "n_triage", DEFAULT);
+  edge("n_open", "n_triage", llm("The opening disclosure has been delivered, or the caller has spoken after it. This transition should fire on the turn where the disclosure is spoken, or on the caller's next turn at the latest."));
 
   // Hard rules first: these run before the model's turn.
   edge("n_triage", "n_specialist", expr(and(cmp("==", v("special_assistance"), s("true")), cmp("==", v("human_queue"), s("open")))));

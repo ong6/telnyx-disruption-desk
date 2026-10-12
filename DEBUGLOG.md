@@ -322,3 +322,26 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
   - The base instructions lost ~30% of their tokens (same rules), and the rebook node reads
     the passengers back by name — a grader nit that kept recurring.
 - **Result.** Suite 7/7 (`tests-2026-10-11-14-32.md`), chat turns at 4.2-5.3 s.
+
+## 20. Voice calls hang: the opening plays, the caller speaks, no model turn ever fires
+
+- **Symptom.** Both widget calls since the Oct 10 restructure: the disclosure plays, the caller
+  asks for a rebooking, and the assistant produces nothing for ~46 seconds until the caller
+  gives up. The same failure on two builds (Kimi-K2.6, then GLM-5.3-Flash).
+- **Evidence.** Conversations 875e8f24 and 3ab38278: the webhook answered at call setup
+  (621 ms, ok), the MCP client initialized and listed tools, the caller's words are in the
+  transcript — and there is no assistant message after the opening. The last voice call with a
+  model reply (b34356db, Oct 10 17:07) ran the **pre-restructure flow**, whose opening was a
+  prompt node; the #12 restructure (speak-node opening) shipped later that evening and was only
+  ever validated in chat, where it works.
+- **Cause (best supported).** On calls, a conversation that starts on a speak node never hands
+  the caller's utterance to the next prompt node's model turn. The docs say speak nodes advance
+  automatically, and chat behaves that way; on calls it does not.
+- **Fix.** The opening is a prompt node again whose first reply is the disclosure verbatim
+  ("do not paraphrase, shorten or extend it"), with an LLM edge to triage that fires as soon as
+  the disclosure is spoken. The refund-rights statement stays a true speak node, so the brief's
+  verbatim-speak requirement is still met. Greeting interruption is now disabled
+  (`disable_greeting_interruption`): both hung calls began with the caller barging in during
+  the opening.
+- **Status.** Chat flows verified after the change; the voice path needs a live widget call to
+  confirm.

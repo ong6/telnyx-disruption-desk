@@ -36,6 +36,9 @@ async function authenticate(req: Request, env: any): Promise<CallClaims | null> 
   // caller ID is found even if the pin happened before the webhook bound them.
   const sid = req.headers.get("mcp-session-id");
   const tp = traceFrom(req.headers.get("traceparent"), "");
+  // One-line diagnostic while the chat identity issue is open: which identity signals arrive,
+  // and which branch of the ladder wins (DEBUGLOG #21).
+  makeLogger("mcp", env).info("auth", { sid: sid ? "present" : "absent", tp: tp ? "present" : "absent" });
   const pinned = sid ? await probeSession(env, `mcp-session:${sid}`) : null;
   const linked = tp ? await probeSession(env, tp) : null;
   let trace: string;

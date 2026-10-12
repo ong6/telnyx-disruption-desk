@@ -174,6 +174,14 @@ async function main() {
     telephony_settings: { supports_unauthenticated_web_calls: true, time_limit_secs: 900 },
     // The ops console embeds <telnyx-ai-agent>; it renders nothing until widget_settings exist.
     widget_settings: { theme: "dark", position: "static", default_state: "expanded", start_call_text: "Talk to the desk", agent_thinking_text: "Checking...", speak_to_interrupt_text: "Speak to interrupt" },
+    // Interruption: the caller can interrupt normally, but not while the opening plays. On the
+    // speak-node opening a mid-greeting interruption preceded both voice calls that hung
+    // (DEBUGLOG #20); the platform's own greeting text can be delivered without barging in.
+    interruption_settings: {
+      enable: true,
+      disable_greeting_interruption: true,
+      start_speaking_plan: { wait_seconds: 0.1, transcription_endpointing_plan: { on_punctuation_seconds: 0.1, on_no_punctuation_seconds: 0.1, on_number_seconds: 0.1 } },
+    },
     conversation_flow: flow,
   };
   const main = await upsertByName("/ai/assistants", "/ai/assistants", { method: "POST", path: (id) => `/ai/assistants/${id}` }, mainBody.name, mainBody);
