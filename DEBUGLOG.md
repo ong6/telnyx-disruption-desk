@@ -325,6 +325,9 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
 
 ## 20. Voice calls hang: the opening plays, the caller speaks, no model turn ever fires
 
+> **Superseded by #21.** The speak node was not the cause, and neither fix below helped: the
+> next widget call hung the same way. The cause was an edge id. The speak-node opening is back.
+
 - **Symptom.** Both widget calls since the Oct 10 restructure: the disclosure plays, the caller
   asks for a rebooking, and the assistant produces nothing for ~46 seconds until the caller
   gives up. The same failure on two builds (Kimi-K2.6, then GLM-5.3-Flash).
@@ -345,3 +348,44 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
   the opening.
 - **Status.** Chat flows verified after the change; the voice path needs a live widget call to
   confirm.
+
+## 21. Every call hung while every chat test passed: an edge id that isn't a valid tool name
+
+- **Symptom.** After the #20 changes, the next widget call (conversation e2d844f6, Oct 12) still
+  hung: the caller's "test" is recorded on `n_open`, and nothing comes back. The chat suite was
+  7/7 the whole time.
+- **A harness that needs no phone.** A second assistant, *Nimbus test caller*, places an outbound
+  AI call from the desk's TeXML app to the desk's SIP address
+  (`sip:anonymous@<assistant id>.sip.telnyx.eu`). Two assistants then talk over the real voice
+  pipeline (speech-to-text, model turns, text-to-speech), and both transcripts come back from the
+  Conversations API. One scenario takes about a minute; it is now `scripts/voice-test.mjs`.
+- **Bisecting, one call per variant.**
+  - A bare assistant (no workflow, webhook or MCP) answered every turn (conversation ad894740).
+  - The desk with `conversation_flow: null` answered every turn, with the same webhook, MCP
+    server, voice and speech-to-text (b2f00695). So the fault was in the workflow.
+  - On the live desk: one prompt node worked (d26d1676); prompt nodes with their LLM edges
+    worked (0e6d5991); adding the speak node worked (5ebe5c58). Adding the edge to the Mandarin
+    assistant hung (d21655ce). The full workflow minus only that edge worked (44748871).
+  - Every variant that had the edge hung (6 calls). One variant without it hung once and passed
+    on a re-run, so a single silent call is not proof on its own.
+- **Cause.** The docs (Conversation workflows, *LLM conditions*) say how calls differ from chat.
+  On a call, each LLM edge is offered to the model as a tool named `transition__<edge id>`, and
+  the edge fires only if the model calls that tool. Chat judges edges in a separate model call,
+  so tool names never come into it. Our id was `e6_n_triage_assistant:assistant-7b3cda63-…`.
+  It contains a colon, and with the prefix it runs to 72 characters, past the
+  `[A-Za-z0-9_-]{1,64}` rule for tool names. The model call for the turn failed, and on a call
+  that is silence.
+- **Fix.**
+  - Edge ids are short names (`triage_mandarin`, `rebook_confirm`).
+  - `tests/flow.test.ts` checks every id against `^[a-z0-9_]{1,52}$`.
+  - The same edge, renamed, hands the call to the Mandarin desk on a real call (0a32d03f).
+  - The verbatim opening is a speak node again and plays at pickup (55e18017).
+  - Greeting interruption is set back to on explicitly, because an update that leaves the field
+    out keeps the old value.
+- **A second finding from the same calls.** On a call, the model has to choose a transition
+  tool, and nothing told it to. In 44748871 the triage node verified the caller itself
+  (`verify_booking` on `n_triage`) and never handed over to rebooking. Node instructions now say
+  when to call each transition, and triage's only job is to pick one.
+- **Takeaway.** For a workflow, chat is not a stand-in for a call: transitions work differently.
+  Every change to the workflow now gets a voice run as well as the chat suite.
+

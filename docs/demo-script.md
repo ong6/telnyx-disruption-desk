@@ -12,24 +12,32 @@ back. This is the phone line I'd want that night."
 ## 2. Normal day (1 min)
 
 Console: **Normal day**. Press **Talk to the desk** (browser call); you're recognised as the demo
-passenger. Ask about baggage: the answer comes from the policy document in Cloud Storage, through
-the MCP `get_policy` tool. Hang up.
+passenger, and the opening ends with the choices: "Hi Jun. I can rebook or cancel your flight to
+Hong Kong, or connect you with a person." Ask about baggage: the answer comes from the policy
+document in Cloud Storage, through the MCP `get_policy` tool. Then "Can I move to tomorrow?":
+pick a time and hear the 100 Singapore dollar change fee before it asks for a yes. Say no and
+hang up. (Saying "cancel it" instead gets the travel-credit offer. On the influx day the Tokyo
+booking `H8N6CU`, Hughes, still pays the fee: the waiver covers Hong Kong only.)
 
 ## 3. Influx day (3 min)
 
-1. Console: **Influx day**. Three flights turn red, the flag goes to KV and into the assistants'
-   default variables with no redeploy, and 200 simulated passengers start rebooking over about a minute through the
-   same MCP tools. Leave it running.
+1. Console: **Influx day**. Today's five Hong Kong flights turn red, the flag goes to KV and
+   into the assistants' default variables with no redeploy, and 200 simulated passengers start
+   rebooking over about a minute through the same MCP tools. Leave it running.
 2. Call from the browser:
-   - the disclosure and the typhoon notice play (one verbatim speak node);
-   - the assistant opens with "your NB866 today is cancelled".
-3. "Move me to the earliest flight." It offers one option per turn, holds a seat, reads back the
-   flight and passengers by name, and asks for a yes. Confirm and get the code letter by letter.
+   - the disclosure, the typhoon notice and the choices play (one verbatim speak node): "Hi Jun.
+     Your flight to Hong Kong is cancelled. I can rebook you onto another flight for free, cancel
+     it for a full refund, or connect you with a person."
+3. "Rebook, please." It asks which day first, then offers up to three times that day, and says
+   the change is free under the Typhoon Koinu waiver. Pick a time: it holds the seat, reads back
+   the flight, date, time, passengers by name and the fee, and asks for a yes. Confirm and get
+   the code letter by letter. (Say "cancel it" instead and you hear the refund-rights statement
+   verbatim and get a refund reference.)
    During tool waits you'll hear a short filler ("Let me check that for you") — that's on purpose:
    measured turns are 4-5 s and the caller never hears dead air.
 4. On the console:
-   - the Live calls ticker shows this call's flow (webhook → verify → options → hold → confirm)
-     as it happens;
+   - the Live calls ticker shows this call's flow (webhook → verify → dates → flights → hold →
+     confirm) as it happens;
    - the surge panel counts rebooked, waitlisted and races lost;
    - the board drains;
    - click your call's trace: webhook, actors, each MCP tool and the reservation system, all under
@@ -62,16 +70,23 @@ the phone rings: "a seat opened up and it's held for you".
   state.
 - **Workflow:** prompt, speak and tool nodes; expression edges for facts, LLM edges for intent.
   Why the gate is a tool node: on calls, prompt-node expression edges wait for the caller's next
-  turn (DEBUGLOG #12).
-- **MCP:** nine tools. Identity comes from Telnyx's traceparent bound by the webhook, so the model
-  never chooses whose booking to change (DEBUGLOG #8).
+  turn (DEBUGLOG #12). And on calls each LLM edge is a tool the model calls, named after the edge
+  id, which is why ids are short and unit-tested (DEBUGLOG #21).
+- **MCP:** eleven tools. Identity comes from Telnyx's traceparent bound by the webhook, so the model
+  never chooses whose booking to change (DEBUGLOG #8). The fee is computed on the server, and
+  `hold_seats` refuses a flight `find_flights` couldn't have offered.
 - **Observability:** JSON logs, spans, the Metrics actor and the canary. How I'd know within a
   minute (the canary goes red), and what I'd look at first (that call's trace).
-- **The hardest bug:** the Trip actor host died under a mass eviction of idle actors and the
+- **The hardest bug:** every voice call hung while every chat test passed. A test-caller
+  assistant phoning the desk's SIP address made each try a one-minute call, so the workflow
+  could be bisected down to one edge: on calls an LLM edge is a tool named after its id, and the
+  Mandarin edge's id wasn't a valid tool name (DEBUGLOG #21; the harness is now
+  `scripts/voice-test.mjs`).
+  Alternate stories: the Trip actor host died under a mass eviction of idle actors and the
   platform kept routing to the dead container; the canary caught it within a minute, the actor
   runtime's own logs showed the stack overflow, and the recovery was a re-ship (DEBUGLOG #14).
-  Alternate story: the webhook answering in 2.3 s while Telnyx had already given up at 1.2 s,
-  found from `response_size_bytes: 0` in the invocation log (DEBUGLOG #7).
+  Or the webhook answering in 2.3 s while Telnyx had already given up at 1.2 s, found from
+  `response_size_bytes: 0` in the invocation log (DEBUGLOG #7).
 - **The dead-air story:** the same build, measured — backend hops are milliseconds, the model was
   the seconds-long cost, and a real caller hung up in the silence. Model switched on evidence,
   fillers added, turns now 4-5 s (DEBUGLOG #18-#19).

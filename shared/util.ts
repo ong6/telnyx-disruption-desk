@@ -40,6 +40,12 @@ export function spokenDate(date: string): string {
   return `${weekday} the ${day}${suffix} of ${month}`;
 }
 
+/** spokenDate, prefixed "today, " or "tomorrow, " when it is, so a caller can answer "tomorrow". */
+export function spokenDay(date: string, today: string): string {
+  const rel = date === today ? "today, " : date === addDays(today, 1) ? "tomorrow, " : "";
+  return `${rel}${spokenDate(date)}`;
+}
+
 /** "14:30" -> "2:30 PM" */
 export function spokenTime(hhmm: string): string {
   const [h, m] = hhmm.split(":").map(Number);

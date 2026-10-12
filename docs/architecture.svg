@@ -94,7 +94,7 @@
 <text class="s" x="1152.0" y="136.0" text-anchor="middle">caller ID → booking, flags</text>
 <text class="s" x="1152.0" y="152.0" text-anchor="middle">binds CallSession by traceparent</text>
 <rect class="node" x="1000" y="232" width="304" height="184" rx="6"/>
-<text class="t" x="1016" y="256">desk-mcp</text><text class="s" x="1016" y="274">MCP server · 9 tools · owns actors</text>
+<text class="t" x="1016" y="256">desk-mcp</text><text class="s" x="1016" y="274">MCP server · 11 tools · owns actors</text>
 <rect class="chip" x="1016" y="288" width="272" height="24" rx="4"/>
 <text class="s" x="1028" y="304" style="fill:var(--fg)">Flight · per flight + date</text>
 <rect class="chip" x="1016" y="316" width="272" height="24" rx="4"/>

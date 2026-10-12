@@ -66,7 +66,7 @@ export interface FlightSnapshot {
   waitlist: number;
 }
 
-export type CaseStatus = "none" | "held" | "rebooked" | "refunded" | "waitlisted" | "escalated";
+export type CaseStatus = "none" | "held" | "rebooked" | "refunded" | "cancelled" | "waitlisted" | "escalated";
 
 export interface TripState {
   booking: BookingDef;
@@ -75,6 +75,7 @@ export interface TripState {
   hold?: { flightId: string; holdId: string; expiresAt: number };
   rebookedTo?: { flightId: string; confirmation: string };
   refund?: { reference: string };
+  credit?: { reference: string }; // a voluntary cancellation keeps the fare as travel credit
   waitlist?: { flightId: string; at: number };
   offer?: { flightId: string; holdId: string; expiresAt: number };
   callback?: { reason: string; at: number; placedAt?: number; result?: string };

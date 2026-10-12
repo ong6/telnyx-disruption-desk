@@ -7,28 +7,37 @@ The feature tour is [FEATURES.md](FEATURES.md); the deep dive is [TECHNICAL.md](
 ## Talking points: the required items
 
 ### 1. AI Assistant with Conversation Workflow
-**The talking point:** "The workflow is 13 nodes and 36 edges with all three node kinds and all
-three edge kinds — and the interesting part is a timing rule we learned the hard way: on calls,
-a prompt node's expression edges only run when the caller next speaks, so any deterministic hop
-that must happen *now* is a speak or tool node, which advances on its own. The handoff gate is a
-tool node that routes on the queue-check's HTTP status code — deterministic, not model-judged."
-Evidence: `assistant/flow.mjs`, DEBUGLOG #12.
+**The talking point:** "The workflow is 14 nodes and 40 edges with all three node kinds and all
+three edge kinds — and the interesting part is two call-only rules we learned the hard way. On
+calls, a prompt node's expression edges only run when the caller next speaks, so any
+deterministic hop that must happen *now* is a speak or tool node, which advances on its own. The
+handoff gate is a tool node that routes on the queue-check's HTTP status code — deterministic,
+not model-judged. And on calls every LLM edge is a tool the model must call, named after the
+edge id: one id that wasn't a valid tool name silenced every call while chat kept passing, so a
+unit test now checks every id."
+Evidence: `assistant/flow.mjs`, `tests/flow.test.ts`, DEBUGLOG #12, #21.
 
 ### 2. MCP Server Integration
-**The talking point:** "Nine tools, and because the platform can't scope MCP tools per workflow
-node, the business rules are enforced *server-side*: no confirm without a live hold, no refund
-unless the flight was disrupted, no callback while an agent is free, verification lockout after
-three failures. And the model never decides whose booking to act on — the booking comes from the
-`CallSession` actor bound by the webhook, keyed by Telnyx's own trace id."
-Evidence: `desk-mcp/src/tools.ts`, DEBUGLOG #4, #8, #9.
+**The talking point:** "Eleven tools, and because the platform can't scope MCP tools per workflow
+node, the business rules are enforced *server-side*: no confirm without a live hold, no hold on a
+flight `find_flights` couldn't have offered, the change fee computed in one place (100 Singapore
+dollars, waived for the typhoon or our own cancellation), no refund unless the flight was
+disrupted, no callback while an agent is free, verification lockout after three failures. And
+the model never decides whose booking to act on — the booking comes from the `CallSession` actor
+bound by the webhook, keyed by Telnyx's own trace id."
+Evidence: `desk-mcp/src/tools.ts`, `shared/fees.ts`, DEBUGLOG #4, #8, #9.
 
 ### 3. Dynamic Webhook Variables
 **The talking point:** "The webhook must answer inside the platform's ~1.2-second cutoff — which
 we measured, not assumed (DEBUGLOG #7). We budget 900 ms, race every sub-call against the
 remaining budget, and if we overrun, the flag variables are simply left out so the assistants'
 defaults apply — defaults that desk-ops keeps in sync. The variables it returns drive
-deterministic routing: special assistance, human queue, disruption mode."
-Evidence: `desk-dv/src/index.ts`, `syncAssistantDefaults`.
+deterministic routing: special assistance, human queue, disruption mode. It also words the
+opening: `opening_offer` tells a known caller what happened and what we can do ('Hi Jun. Your
+flight to Hong Kong is cancelled. I can rebook you onto another flight for free, cancel it for a
+full refund, or connect you with a person'), and the assistant's default carries the anonymous
+version."
+Evidence: `desk-dv/src/index.ts` (`openingOffer`), `syncAssistantDefaults`.
 
 ### 4a. Edge Functions
 **The talking point:** "Four functions, split by *contract* rather than by code shape: the
@@ -74,8 +83,8 @@ Evidence: `.opencode/`, DEBUGLOG #18, DOGFOODING.md.
 ### 7. Public Deployment & Documentation
 **The talking point:** "Four live Edge Function URLs, a working MCP server (POST-only, the
 protocol requires it), a callable phone line, and a README that names its limits in plain
-language — the trial account's dial-in restriction, the hand-edited policy bucket, the demo
-conveniences. Nothing in the docs overclaims."
+language — the trial account's dial-in restriction, chat not being the product channel, the
+demo conveniences. Nothing in the docs overclaims."
 Evidence: README "Try it" + "Limits".
 
 ## Talking points: the stretch goals (all eight)
@@ -94,12 +103,27 @@ Evidence: README "Try it" + "Limits".
 ## "What happened here" — the week's incidents, as Q&A
 
 **Q: What was the hardest bug, and how did you find it?**
-The Trip actor host dying while the platform kept routing to it (#14). The signal chain: the
-canary sparkline went red (tool-call probe failing) while the webhook and `tools/list` probes
-stayed green — so the *function* was alive but the *actor* wasn't. The failing span said
-"failed to invoke target … after 5 retries"; the actor's own runtime log had the real cause: a
-stack overflow inside the platform's deactivation path, triggered by ~200 idle simulated actors
-evicting together. Recovery was a re-ship; prevention was clearing simulated state in batches.
+Every voice call hung while every chat test passed (#21). The opening played, the caller spoke,
+and no model turn ever came back. The first theory, the speak-node opening (#20), was wrong: the
+next call hung the same way. So we built a harness that needs no phone: a second assistant, a
+*test caller*, places an AI call to the desk's SIP address, the two talk over the real voice
+pipeline, and both transcripts come back from the Conversations API — one variant per minute.
+Then we bisected: a bare assistant answered; the desk with its workflow removed answered; the
+workflow built up node by node answered until one edge, the handoff to the Mandarin desk, was
+added. Every variant with that edge hung; the full workflow minus only that edge worked. The
+docs explain why: on a call, each LLM edge is offered to the model as a tool named
+`transition__<edge id>`, and that id had a colon and, with the prefix, ran to 72 characters,
+breaking the `[A-Za-z0-9_-]{1,64}` rule — so every model turn failed, and on a call that is silence. Chat
+judges edges in a separate call, so it never saw it. Fix: short edge ids and a unit test; the
+harness is now `scripts/voice-test.mjs`, and every workflow change gets a voice run.
+
+The other strong one: the Trip actor host dying while the platform kept routing to it (#14). The
+signal chain: the canary sparkline went red (tool-call probe failing) while the webhook and
+`tools/list` probes stayed green — so the *function* was alive but the *actor* wasn't. The
+failing span said "failed to invoke target … after 5 retries"; the actor's own runtime log had
+the real cause: a stack overflow inside the platform's deactivation path, triggered by ~200 idle
+simulated actors evicting together. Recovery was a re-ship; prevention was clearing simulated
+state in batches.
 
 **Q: How did you make sure the assistant doesn't oversell?**
 The stampede lab: 300 concurrent holds on a 60-seat flight, through the actor and through naive
@@ -107,7 +131,8 @@ KV, with recorded evidence. The actor grants 60; KV grants 300 and records 1.
 
 **Q: What failed that surprised you?**
 Two things: chat is not the product channel — the webhook runs late in chat, per-call MCP
-credentials don't survive it, and the assistant-edge handoff stalls (#6, #8, #9, #17); and a
+credentials don't survive it, the assistant-edge handoff stalls (#6, #8, #9, #17), and
+transitions are judged differently, so chat passed while calls hung (#21); and a
 webhook that re-runs every turn in chat can overwrite state — a refund once landed on the demo
 caller's booking instead of the verified one (#15). Both are fixed in code, not prompts.
 
@@ -125,11 +150,15 @@ trimmed the prompts ~30%. Turns went from 5.7–7.1 s (and a real caller hanging
 silence) to 4.2–5.3 s with speech filling the waits (#18, #19).
 
 **Q: What's your test story?**
-Unit tests (15) for the pure logic and the actor's hold/confirm/waitlist behaviour; a
-rubric-graded scenario suite of 7 end-to-end tests through Telnyx's own runner (7/7 on the
-final build); and load evidence from the stampede lab and the 200-passenger surge. The suite's
-earlier failures were real bugs — missing refund reference, confirm-without-a-yes, a fragmented
-lockout counter, the booking overwrite — each fixed and documented.
+Unit tests (22) for the pure logic, the actor's hold/confirm/waitlist behaviour and the
+workflow's shape (every edge id a valid transition tool name); a rubric-graded chat suite of 8
+end-to-end tests through Telnyx's own runner (the 7-test version ran 7/7 on the Oct 11 build;
+the eighth checks the 100-dollar fee on a normal change); AI-to-AI voice scenarios over SIP
+(`scripts/voice-test.mjs`: rebook on the typhoon day, rebook with the fee, refund, travel
+credit, a person, Mandarin), because chat can't see voice-only failures; and load evidence from
+the stampede lab and the 200-passenger surge. The suite's earlier failures were real bugs —
+missing refund reference, confirm-without-a-yes, a fragmented lockout counter, the booking
+overwrite — each fixed and documented.
 
 **Q: What breaks at real scale?**
 The `Metrics` actor is single-instance (shard by minute or hash); seat inventory would be
@@ -150,3 +179,4 @@ WebRTC call to the same assistant for everyone else.
 - "KV is only for things where being ten seconds stale is fine."
 - "Every hop answers in milliseconds; the model is the only seconds-long hop, and we fill it."
 - "The canary is the demo of our own observability — it caught us once, on video."
+- "Chat is not a stand-in for a call: transitions work differently."

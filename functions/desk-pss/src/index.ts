@@ -93,7 +93,7 @@ async function route(req: Request, url: URL, env: any): Promise<Response> {
       const [updated] = await db.batch([
         db.prepare("UPDATE bookings SET status = 'rebooked', new_flight = ?, new_date = ?, confirmation = ?, updated_at = ? WHERE code = ? RETURNING *")
           .bind(body.flight, body.date, body.confirmation, now, code),
-        db.prepare("INSERT INTO changes (code, at, kind, detail) VALUES (?, ?, 'rebook', ?)").bind(code, now, `${body.flight} ${body.date} ${body.confirmation}`),
+        db.prepare("INSERT INTO changes (code, at, kind, detail) VALUES (?, ?, 'rebook', ?)").bind(code, now, `${body.flight} ${body.date} ${body.confirmation} fee=${Number(body.fee ?? 0)}`),
       ]);
       return json(updated.results[0]);
     }
@@ -105,6 +105,17 @@ async function route(req: Request, url: URL, env: any): Promise<Response> {
         db.prepare("INSERT INTO changes (code, at, kind, detail) VALUES (?, ?, 'refund', ?)").bind(code, now, String(body.reason ?? "")),
       ]);
       return json({ refund_ref: ref });
+    }
+    // A voluntary cancellation: the fare isn't refunded, its value is kept as travel credit. The
+    // credit reference shares the refund_ref column (CR prefix) so the schema needs no migration.
+    if (parts[3] === "cancel" && req.method === "POST") {
+      const ref = `CR${newCode(5)}`;
+      const now = Date.now();
+      await db.batch([
+        db.prepare("UPDATE bookings SET status = 'cancelled', refund_ref = ?, updated_at = ? WHERE code = ?").bind(ref, now, code),
+        db.prepare("INSERT INTO changes (code, at, kind, detail) VALUES (?, ?, 'cancel', ?)").bind(code, now, `credit ${ref}`),
+      ]);
+      return json({ credit_ref: ref });
     }
   }
 

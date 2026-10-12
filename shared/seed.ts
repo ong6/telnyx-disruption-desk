@@ -5,21 +5,37 @@ import type { BookingDef, FlightDef } from "./types";
 const route = (number: string, day: number, dep: string, arr: string, capacity: number, sold: number, from = "SIN", to = "HKG"): FlightDef =>
   ({ number, day, dep, arr, from, to, capacity, sold });
 
-export const FLIGHTS: FlightDef[] = [
-  // Singapore -> Hong Kong, today: the flights the typhoon cancels
-  route("NB862", 0, "09:15", "13:05", 180, 171),
-  route("NB866", 0, "14:30", "18:20", 180, 176),
-  route("NB868", 0, "20:05", "23:55", 180, 168),
-  // Singapore -> Hong Kong, tomorrow and the day after: where people get rebooked
-  route("NB862", 1, "09:15", "13:05", 180, 174), // 6 left
-  route("NB866", 1, "14:30", "18:20", 180, 176), // 4 left
-  route("NB868", 1, "20:05", "23:55", 180, 171), // 9 left
-  route("NB862", 2, "09:15", "13:05", 180, 150), // 30 left
-  route("NB866", 2, "14:30", "18:20", 180, 160),
-  // An unaffected route, for normal-day questions
-  route("NB802", 0, "08:40", "16:50", 220, 190, "SIN", "NRT"),
-  route("NB802", 1, "08:40", "16:50", 220, 200, "SIN", "NRT"),
+/** How many days of schedule exist, from today: the rebooking window callers choose from. */
+export const SCHEDULE_DAYS = 7;
+
+// Every route flies the same departures every day. Singapore -> Hong Kong is the route the
+// typhoon hits; Singapore -> Tokyo is unaffected, for normal-day changes.
+const DAILY: [number: string, dep: string, arr: string, capacity: number, from: string, to: string][] = [
+  ["NB860", "07:10", "11:00", 180, "SIN", "HKG"],
+  ["NB862", "09:15", "13:05", 180, "SIN", "HKG"],
+  ["NB864", "11:45", "15:35", 180, "SIN", "HKG"],
+  ["NB866", "14:30", "18:20", 180, "SIN", "HKG"],
+  ["NB868", "20:05", "23:55", 180, "SIN", "HKG"],
+  ["NB802", "08:40", "16:50", 220, "SIN", "NRT"],
+  ["NB804", "12:20", "20:30", 220, "SIN", "NRT"],
+  ["NB806", "15:05", "23:15", 220, "SIN", "NRT"],
 ];
+
+// Seats left where the story needs them: today is nearly full, tomorrow is where a typhoon surge
+// lands first (one flight already full, for the waitlist), the day after has room. Other days
+// follow a fixed pattern, so every scenario load is identical.
+const SEATS_LEFT: Record<string, number> = {
+  "NB860/0": 5, "NB862/0": 9, "NB864/0": 8, "NB866/0": 4, "NB868/0": 12,
+  "NB860/1": 0, "NB862/1": 6, "NB864/1": 3, "NB866/1": 4, "NB868/1": 9,
+  "NB860/2": 10, "NB862/2": 30, "NB864/2": 25, "NB866/2": 20, "NB868/2": 15,
+  "NB802/0": 30, "NB804/0": 20, "NB806/0": 15, "NB802/1": 20,
+};
+
+export const FLIGHTS: FlightDef[] = Array.from({ length: SCHEDULE_DAYS }, (_, day) =>
+  DAILY.map(([number, dep, arr, capacity, from, to], i) =>
+    route(number, day, dep, arr, capacity, capacity - (SEATS_LEFT[`${number}/${day}`] ?? 20 + ((day * 7 + i * 11) % 30)), from, to),
+  ),
+).flat();
 
 /** Relief flight the operations team can add during a disruption (console button). */
 export const RELIEF_FLIGHT: FlightDef = route("NB870", 1, "07:40", "11:30", 300, 0);
@@ -40,10 +56,6 @@ export const INCIDENTS: Record<string, { notice: string; cancels: { flight: stri
   typhoon: {
     notice:
       "Typhoon Koinu has closed Hong Kong International Airport. All Nimbus Air flights from Singapore to Hong Kong today are cancelled.",
-    cancels: [
-      { flight: "NB862", day: 0 },
-      { flight: "NB866", day: 0 },
-      { flight: "NB868", day: 0 },
-    ],
+    cancels: DAILY.filter(([, , , , , to]) => to === "HKG").map(([flight]) => ({ flight, day: 0 })),
   },
 };

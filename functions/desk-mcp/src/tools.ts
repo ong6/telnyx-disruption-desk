@@ -1,13 +1,14 @@
 // The MCP tools. Every tool acts on the booking this call is verified for (bound by the webhook
 // from caller ID, or by verify_booking): the model never chooses whose booking to change. Rules
-// live here, not in the prompt: no confirm without a live hold, no refund unless the flight was
-// disrupted.
+// live here, not in the prompt: only same-route flights can be held, no confirm without a live
+// hold, the change fee is computed here, no refund unless the flight was disrupted.
 import { readConfigFast } from "../../../shared/config";
 import { pss, type PssBooking } from "../../../shared/pss-client";
-import { rankOptions } from "../../../shared/rank";
+import { changeFee } from "../../../shared/fees";
+import { departuresOn, travelDates, type RankOpts } from "../../../shared/rank";
 import type { CallClaims, FlightSnapshot, TripState } from "../../../shared/types";
-import { AIRLINE } from "../../../shared/seed";
-import { addDays, departsAt, flightId, newCode, spell, spokenDate, spokenFlight, spokenTime } from "../../../shared/util";
+import { AIRLINE, SCHEDULE_DAYS } from "../../../shared/seed";
+import { addDays, flightId, newCode, sgDate, spell, spokenDate, spokenDay, spokenFlight, spokenTime } from "../../../shared/util";
 
 export interface ToolCtx {
   env: any;
@@ -65,12 +66,34 @@ async function caseSummary(ctx: ToolCtx, b: PssBooking) {
     case_status: t?.status ?? "none",
     held_seat: hold ? { flight_id: hold.flightId, minutes_left: Math.max(1, Math.round((hold.expiresAt - Date.now()) / 60000)) } : null,
     rebooked: b.confirmation ? { flight: `${b.new_flight} on ${b.new_date}`, confirmation_code: b.confirmation, spelled: spell(b.confirmation) } : null,
-    refund_reference: b.refund_ref,
+    refund_reference: b.status === "refunded" ? b.refund_ref : null,
+    travel_credit_reference: b.status === "cancelled" ? b.refund_ref : null,
     waitlisted_for: t?.status === "waitlisted" ? t.waitlist?.flightId : null,
     tier: b.tier,
     special_assistance: b.assistance,
   };
 }
+
+/** Everything a rebooking step needs: the booking, its original flight, the fee and the rules
+ *  for which flights qualify (same route, not the original or current flight, not about to leave). */
+async function rebookContext(ctx: ToolCtx) {
+  const b = await requireBooking(ctx);
+  const orig = await pss(ctx.env, ctx.claims.trace, ctx.log).flight(b.flight, b.date);
+  if (!orig) throw new ToolError("flight_missing", "Original flight not found");
+  const scenario = (await readConfigFast(ctx.env, 300))?.scenario;
+  const exclude = [flightId(orig.number, orig.date), ...(b.new_flight && b.new_date ? [flightId(b.new_flight, b.new_date)] : [])];
+  const rules: RankOpts = { from: orig.origin, to: orig.dest, pax: b.pax, notBefore: Date.now() + 90 * 60_000, exclude };
+  return { b, orig, rules, fee: changeFee(orig, scenario?.id) };
+}
+
+/** Live seat counts (from the Flight actors) for the route's schedule between two dates. */
+async function liveFlights(ctx: ToolCtx, origin: string, dest: string, from: string, to: string): Promise<FlightSnapshot[]> {
+  const schedule = await pss(ctx.env, ctx.claims.trace, ctx.log).flights(origin, dest, from, to);
+  const snaps = await Promise.all(schedule.map((f) => flight(ctx, flightId(f.number, f.date)).snapshot() as Promise<FlightSnapshot | null>));
+  return snaps.filter((s): s is FlightSnapshot => !!s);
+}
+
+const isDate = (d: unknown): d is string => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d);
 
 export const TOOLS: Record<string, Tool> = {
   verify_booking: {
@@ -107,47 +130,80 @@ export const TOOLS: Record<string, Tool> = {
     },
   },
 
-  find_alternatives: {
+  find_dates: {
     description:
-      "Up to 3 flights the caller can move to, earliest first, each with enough seats for everyone on the booking. Offer at most two at a time. Only ever offer flights this tool returned.",
+      "Rebooking step 1: the dates in the next week that have a flight with seats for everyone on the booking, earliest first, and the change fee. Ask the caller which date they want before you mention any times.",
     inputSchema: { type: "object", properties: {} },
     async run(ctx) {
-      const b = await requireBooking(ctx);
-      const orig = await pss(ctx.env, ctx.claims.trace, ctx.log).flight(b.flight, b.date);
-      if (!orig) throw new ToolError("flight_missing", "Original flight not found");
-      const schedule = await pss(ctx.env, ctx.claims.trace, ctx.log).flights(orig.origin, orig.dest, b.date, addDays(b.date, 2));
-      const snaps: FlightSnapshot[] = (
-        await Promise.all(schedule.map((f) => flight(ctx, flightId(f.number, f.date)).snapshot() as Promise<FlightSnapshot | null>))
-      ).filter((s): s is FlightSnapshot => !!s);
-      const options = rankOptions(snaps, {
-        from: orig.origin, to: orig.dest, pax: b.pax, notBefore: Date.now() + 90 * 60_000, exclude: flightId(orig.number, orig.date),
-      });
+      const { b, orig, rules, fee } = await rebookContext(ctx);
+      const today = sgDate(0);
+      const from = orig.date > today ? orig.date : today;
+      const dates = travelDates(await liveFlights(ctx, orig.origin, orig.dest, from, addDays(orig.date, SCHEDULE_DAYS - 1)), rules);
       return {
         passengers_on_booking: b.pax,
-        options: options.map((f) => ({ flight_id: f.id, say: describeFlight(f), seats_left: f.seatsLeft })),
-        none_available: options.length === 0,
-        if_none: "offer the waitlist on the earliest flight (join_waitlist) or a refund (request_refund)",
+        dates: dates.map((d) => ({ date: d.date, say: spokenDay(d.date, today), departures_with_seats: d.departures })),
+        change_fee_sgd: fee.amount,
+        fee_say: fee.say,
+        none_available: dates.length === 0,
+        next: dates.length
+          ? "offer the first two or three dates and ask which day suits them; once they pick a day, call find_flights with that date"
+          : "no flight this week has seats for the whole party: offer the waitlist or, if their flight was cancelled, a refund",
+      };
+    },
+  },
+
+  find_flights: {
+    description:
+      "Rebooking step 2, once the caller has chosen a date: the departure times that day with seats for everyone on the booking, earliest first, each with its change fee. Also lists that day's full flights, for the waitlist.",
+    inputSchema: {
+      type: "object",
+      properties: { date: { type: "string", description: "YYYY-MM-DD, one of the dates find_dates returned" } },
+      required: ["date"],
+    },
+    async run(ctx, { date }) {
+      if (!isDate(date)) throw new ToolError("bad_date", "Pass the date as YYYY-MM-DD, from find_dates.");
+      const { b, orig, rules, fee } = await rebookContext(ctx);
+      const { open, full } = departuresOn(await liveFlights(ctx, orig.origin, orig.dest, date, date), date, rules);
+      return {
+        date,
+        date_say: spokenDay(date, sgDate(0)),
+        passengers_on_booking: b.pax,
+        options: open.map((f) => ({ flight_id: f.id, say: `${spokenFlight(f.number)}, departing ${spokenTime(f.dep)} and arriving ${spokenTime(f.arr)}`, seats_left: f.seatsLeft, change_fee_sgd: fee.amount })),
+        full_flights: full.map((f) => ({ flight_id: f.id, say: `${spokenFlight(f.number)} at ${spokenTime(f.dep)}` })),
+        fee_say: fee.say,
+        next: open.length
+          ? "offer up to three departure times (earliest first, or in the part of the day they asked for), say the change fee once, and ask which time they want"
+          : "nothing has seats that day: offer another date from find_dates, or the waitlist on one of the full flights",
       };
     },
   },
 
   hold_seats: {
     description:
-      "Hold seats for everyone on the booking on one flight, all or nothing, for a few minutes while the caller decides. Use the flight_id from find_alternatives.",
+      "Hold seats for everyone on the booking on one flight, all or nothing, for a few minutes while the caller decides. Use a flight_id from find_flights.",
     inputSchema: { type: "object", properties: { flight_id: { type: "string", description: "e.g. NB862-2026-10-12" } }, required: ["flight_id"] },
     async run(ctx, { flight_id }) {
-      const b = await requireBooking(ctx);
+      const { b, rules, fee } = await rebookContext(ctx);
+      // Only a flight find_flights could have offered: same route, not the original, not leaving soon.
+      const target: FlightSnapshot | null = await flight(ctx, String(flight_id)).snapshot();
+      const date = target?.date ?? "";
+      if (!target || !departuresOn([target], date, { ...rules, pax: 0 }).open.length)
+        return { held: false, reason: "not_offered", next: "only hold a flight_id that find_flights returned for this booking" };
       // Never wait on a KV read mid-conversation: last known flags, refreshed in the background.
       const ttl = (await readConfigFast(ctx.env, 300))?.flags.hold_ttl_secs ?? 600;
       const t: TripState | null = await trip(ctx, b.code).get();
       // Hold the new flight first: if it just filled up, the caller keeps the hold they have.
       const r = await flight(ctx, flight_id).hold(b.code, b.pax, ttl);
       if (!r.ok) {
-        return { held: false, reason: r.reason, seats_left: r.seatsLeft, next: "say that flight just filled up, then offer the next option from find_alternatives" };
+        return { held: false, reason: r.reason, seats_left: r.seatsLeft, next: "say that flight just filled up, then offer another time from find_flights" };
       }
       if (t?.hold && t.hold.flightId !== flight_id) await flight(ctx, t.hold.flightId).release(t.hold.holdId);
       await trip(ctx, b.code).held(flight_id, r.holdId, r.expiresAt);
-      return { held: true, flight_id, passengers: b.pax, minutes_to_confirm: Math.round((r.expiresAt - Date.now()) / 60000), next: "read back the flight and ask the caller to confirm" };
+      return {
+        held: true, flight_id, flight: describeFlight(target), passengers: b.pax, minutes_to_confirm: Math.round((r.expiresAt - Date.now()) / 60000),
+        change_fee_sgd: fee.amount, fee_say: fee.amount ? `The change fee is ${fee.amount} Singapore dollars, charged to the card you booked with.` : fee.say,
+        next: "read back the flight, date, departure time, the passengers and the change fee, then ask for a clear yes",
+      };
     },
   },
 
@@ -159,12 +215,14 @@ export const TOOLS: Record<string, Tool> = {
       const t: TripState | null = await trip(ctx, b.code).get();
       if (!t?.hold) return { confirmed: false, reason: "no_hold", next: "hold a flight first" };
       const r = await flight(ctx, t.hold.flightId).confirm(t.hold.holdId, b.code);
-      if (!r.ok) return { confirmed: false, reason: r.reason, next: "apologise that the hold expired, run find_alternatives again" };
+      if (!r.ok) return { confirmed: false, reason: r.reason, next: "apologise that the hold expired, run find_flights again for the same date" };
       const target: FlightSnapshot = await flight(ctx, t.hold.flightId).snapshot();
+      const orig = await pss(ctx.env, ctx.claims.trace, ctx.log).flight(b.flight, b.date);
+      const fee = changeFee(orig ?? { status: "scheduled", origin: target.from, dest: target.to }, (await readConfigFast(ctx.env, 300))?.scenario?.id);
       const confirmation = newCode(6);
       let ticketing = "issued";
       try {
-        await pss(ctx.env, ctx.claims.trace, ctx.log).rebook(b.code, { flight: target.number, date: target.date, confirmation });
+        await pss(ctx.env, ctx.claims.trace, ctx.log).rebook(b.code, { flight: target.number, date: target.date, confirmation, fee: fee.amount });
       } catch (e: any) {
         ticketing = "pending"; // the seat is ours in the actor; the write-back is retried by an agent
         ctx.log.error("pss_writeback_failed", { trace: ctx.claims.trace, booking: b.code, err: String(e?.message ?? e) });
@@ -173,11 +231,11 @@ export const TOOLS: Record<string, Tool> = {
       const origId = flightId(b.flight, b.date);
       if (origId !== target.id) await flight(ctx, origId).returnSeats(b.code, b.pax).catch(() => {});
       await trip(ctx, b.code).rebooked(target.id, confirmation);
-      const receipt = { confirmation, booking: b.code, passenger: `${b.first_name} ${b.last_name}`, pax: b.pax, flight: target, ticketing, at: new Date().toISOString(), trace: ctx.claims.trace };
+      const receipt = { confirmation, booking: b.code, passenger: `${b.first_name} ${b.last_name}`, pax: b.pax, flight: target, change_fee_sgd: fee.amount, fee_waived_by: fee.waivedBy, ticketing, at: new Date().toISOString(), trace: ctx.claims.trace };
       ctx.env.DOCS?.put(`receipts/${confirmation}.json`, JSON.stringify(receipt, null, 2), { httpMetadata: { contentType: "application/json" } }).catch(() => {});
       return {
-        confirmed: true, confirmation_code: confirmation, spelled: spell(confirmation), flight: describeFlight(target), passengers: b.pax, ticketing,
-        say: `You're confirmed on ${describeFlight(target)}. Your new confirmation code is ${spell(confirmation)}.`,
+        confirmed: true, confirmation_code: confirmation, spelled: spell(confirmation), flight: describeFlight(target), passengers: b.pax, change_fee_sgd: fee.amount, ticketing,
+        say: `You're confirmed on ${describeFlight(target)}. Your new confirmation code is ${spell(confirmation)}.${fee.amount ? ` The ${fee.amount} Singapore dollar change fee goes on the card you booked with.` : " There's no charge for the change."}`,
       };
     },
   },
@@ -201,6 +259,31 @@ export const TOOLS: Record<string, Tool> = {
       return {
         refunded: true, refund_reference: refund_ref, spelled: spell(refund_ref), timeline: "back on the original card within 7 business days",
         say: `Your refund is done. The reference is ${spell(refund_ref)}. The money will be back on your original card within 7 business days.`,
+      };
+    },
+  },
+
+  cancel_booking: {
+    description:
+      "Cancel the booking when the caller no longer wants to travel and their flight is operating. The fare isn't refunded; its full value is kept as travel credit for 12 months. Explain that and get a clear yes first. If Nimbus Air cancelled or delayed their flight, use request_refund instead.",
+    inputSchema: { type: "object", properties: {} },
+    async run(ctx) {
+      const b = await requireBooking(ctx);
+      if (b.status === "cancelled" || b.status === "refunded") return { cancelled: false, reason: `already_${b.status}`, next: "tell the caller the booking is already closed and give the reference from get_trip_status" };
+      const orig = await pss(ctx.env, ctx.claims.trace, ctx.log).flight(b.flight, b.date);
+      if (orig?.status === "cancelled" || orig?.status === "delayed")
+        return { cancelled: false, reason: "refund_eligible", next: "their flight was disrupted, so they're entitled to a full refund: use request_refund instead" };
+      const t: TripState | null = await trip(ctx, b.code).get();
+      const { credit_ref } = await pss(ctx.env, ctx.claims.trace, ctx.log).cancel(b.code);
+      // The seats go back once the cancellation is recorded: a live hold, and the seats on
+      // whichever flight they hold now (the rebooked one if they changed, else the original).
+      if (t?.hold) await flight(ctx, t.hold.flightId).release(t.hold.holdId);
+      const seatsOn = t?.rebookedTo?.flightId ?? flightId(b.flight, b.date);
+      await flight(ctx, seatsOn).returnSeats(b.code, b.pax).catch(() => {});
+      await trip(ctx, b.code).cancelled(credit_ref);
+      return {
+        cancelled: true, travel_credit_reference: credit_ref, spelled: spell(credit_ref), valid_for: "12 months",
+        say: `Your booking is cancelled. The full ticket value is kept as travel credit for 12 months, under reference ${spell(credit_ref)}. You can use it on any Nimbus Air flight.`,
       };
     },
   },

@@ -37,7 +37,7 @@ async function authenticate(req: Request, env: any): Promise<CallClaims | null> 
   const sid = req.headers.get("mcp-session-id");
   const tp = traceFrom(req.headers.get("traceparent"), "");
   // One-line diagnostic while the chat identity issue is open: which identity signals arrive,
-  // and which branch of the ladder wins (DEBUGLOG #21).
+  // and which branch of the ladder wins (DEBUGLOG #16).
   makeLogger("mcp", env).info("auth", { sid: sid ? "present" : "absent", tp: tp ? "present" : "absent" });
   const pinned = sid ? await probeSession(env, `mcp-session:${sid}`) : null;
   const linked = tp ? await probeSession(env, tp) : null;
@@ -129,6 +129,7 @@ export default {
 function outcomeFor(tool: string, out: any): string | undefined {
   if (tool === "confirm_rebooking" && out.confirmed) return "rebooked";
   if (tool === "request_refund" && out.refunded) return "refunded";
+  if (tool === "cancel_booking" && out.cancelled) return "cancelled";
   if (tool === "join_waitlist" && out.waitlisted) return "waitlisted";
   if (tool === "request_callback" && out.booked) return "callback_booked";
   return undefined;

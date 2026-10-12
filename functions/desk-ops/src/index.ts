@@ -6,7 +6,7 @@ export { Surge } from "./surge";
 import { readConfig, resetConfigCache, writeFlags, type Flags, type Scenario } from "../../../shared/config";
 import { URLS } from "../../../shared/endpoints";
 import { makeLogger } from "../../../shared/log";
-import { BOOKINGS, INCIDENTS, RELIEF_FLIGHT } from "../../../shared/seed";
+import { BOOKINGS, FLIGHTS, INCIDENTS, RELIEF_FLIGHT, SCHEDULE_DAYS } from "../../../shared/seed";
 import type { FlightSnapshot } from "../../../shared/types";
 import { addDays, flightId, maskPhone, sgDate } from "../../../shared/util";
 import { CONSOLE_HTML } from "./console";
@@ -155,12 +155,16 @@ async function loadScenario(env: any, id: string, log: ReturnType<typeof makeLog
   const baseDate = sgDate(0);
   const incident = INCIDENTS[id];
   const reset = await pssFetch("/v1/admin/reset", { method: "POST", body: JSON.stringify({ scenario: incident ? id : undefined, baseDate }) });
-  const flights: any[] = (await Promise.all(ROUTES.map(([o, d]) => pssFetch(`/v1/flights?origin=${o}&dest=${d}&from=${baseDate}&to=${addDays(baseDate, 2)}`)))).flat();
-  await Promise.all(
-    flights.map((f) =>
-      env.FLIGHT.idFromName(flightId(f.number, f.date)).init({ id: flightId(f.number, f.date), number: f.number, date: f.date, dep: f.dep, arr: f.arr, from: f.origin, to: f.dest, status: f.status, capacity: f.capacity, sold: f.sold }),
-    ),
-  );
+  const flights: any[] = (await Promise.all(ROUTES.map(([o, d]) => pssFetch(`/v1/flights?origin=${o}&dest=${d}&from=${baseDate}&to=${addDays(baseDate, SCHEDULE_DAYS - 1)}`)))).flat();
+  // A week of schedule is a few dozen Flight actors: initialise them in small batches, not one
+  // burst (a burst of actor work took the actor host down once, DEBUGLOG #14).
+  for (let i = 0; i < flights.length; i += 12) {
+    await Promise.all(
+      flights.slice(i, i + 12).map((f) =>
+        env.FLIGHT.idFromName(flightId(f.number, f.date)).init({ id: flightId(f.number, f.date), number: f.number, date: f.date, dep: f.dep, arr: f.arr, from: f.origin, to: f.dest, status: f.status, capacity: f.capacity, sold: f.sold }),
+      ),
+    );
+  }
   await Promise.all(
     BOOKINGS.map((b) => env.TRIP.idFromName(b.code).init({ ...b, phone: b.phone === "$DEMO_CALLER" ? process.env.DEMO_CALLER_NUMBER ?? "" : b.phone }, addDays(baseDate, b.day))),
   );
@@ -176,8 +180,9 @@ async function loadScenario(env: any, id: string, log: ReturnType<typeof makeLog
 async function state(env: any) {
   const { flags, scenario } = await readConfig(env);
   const base = scenario?.baseDate ?? sgDate(0);
+  // The departure board: the typhoon route for today and the next two days, plus the relief flight.
   const ids = [...new Set([
-    ...["NB862", "NB866", "NB868"].flatMap((n) => [0, 1, 2].map((d) => flightId(n, addDays(base, d)))),
+    ...FLIGHTS.filter((f) => f.to === "HKG" && f.day <= 2).map((f) => flightId(f.number, addDays(base, f.day))),
     flightId(RELIEF_FLIGHT.number, addDays(base, RELIEF_FLIGHT.day)),
   ])];
   const t0 = Date.now();

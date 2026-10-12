@@ -1,5 +1,5 @@
 // One actor per booking. It remembers the passenger's case across calls (what was held,
-// rebooked, refunded, how many verification attempts failed) and owns the callback alarm.
+// rebooked, refunded or cancelled, how many verification attempts failed) and owns the callback alarm.
 // Read by desk-dv to greet a returning caller, written by desk-mcp tools: a shared actor.
 import { StatefulActor } from "@telnyx/edge-runtime";
 import type { BookingDef, TripState } from "../../../shared/types";
@@ -54,6 +54,9 @@ export class Trip extends StatefulActor {
   }
   async refunded(reference: string) {
     return this.mutate("refunded", (s) => ((s.status = "refunded"), (s.refund = { reference }), delete s.hold), reference);
+  }
+  async cancelled(reference: string) {
+    return this.mutate("cancelled", (s) => ((s.status = "cancelled"), (s.credit = { reference }), delete s.hold), reference);
   }
   async waitlisted(flightId: string) {
     return this.mutate("waitlisted", (s) => ((s.status = "waitlisted"), (s.waitlist = { flightId, at: Date.now() })), flightId);

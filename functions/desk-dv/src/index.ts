@@ -34,6 +34,19 @@ function signatureValid(req: Request, raw: string): boolean {
 
 const yes = (b: boolean) => (b ? "true" : "false");
 
+/** The choices every caller hears at the end of the verbatim opening (a speak node), worded for
+ *  what we already know about them: rebook, cancel, or a person. */
+export const OFFER_ANYONE = "I can rebook or cancel your flight, or connect you with a person. How can I help?";
+export function openingOffer(o: { name?: string; city?: string; status?: string; hold?: string; rebooked?: string; seatOffered?: boolean }): string {
+  if (!o.name) return OFFER_ANYONE;
+  const hi = `Hi ${o.name}.`;
+  if (o.seatOffered) return `${hi} We're calling back because a seat has opened up for you, and it's on hold. Would you like me to confirm it, or would you rather speak to a person?`;
+  if (o.hold) return `${hi} You have a seat on hold for your new flight. Would you like me to confirm it, choose another flight, or connect you with a person?`;
+  if (o.rebooked) return `${hi} You're already rebooked, and your confirmation code is ${o.rebooked}. I can change that flight, cancel it, or connect you with a person. What would you like to do?`;
+  if (o.status === "cancelled") return `${hi} Your flight to ${o.city} is cancelled. I can rebook you onto another flight for free, cancel it for a full refund, or connect you with a person. What would you like to do?`;
+  return `${hi} I can rebook or cancel your flight to ${o.city}, or connect you with a person. What would you like to do?`;
+}
+
 export default {
   async fetch(req: Request, env: any): Promise<Response> {
     const url = new URL(req.url);
@@ -64,7 +77,9 @@ export default {
       const flags = cfg?.flags ?? { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "off" as const };
       const scenario = cfg?.scenario ?? null;
       let caller: string = p.telnyx_end_user_target ?? "";
-      if (!caller.startsWith("+") && channel !== "phone_call" && flags.web_calls_as_demo_caller === "on") caller = process.env.DEMO_CALLER_NUMBER ?? "";
+      // A browser (widget) call has no phone number, only a SIP identity, even though its channel
+      // reads phone_call: the caller id, not the channel, is what tells it apart.
+      if (!caller.startsWith("+") && flags.web_calls_as_demo_caller === "on") caller = process.env.DEMO_CALLER_NUMBER ?? "";
       // An unsigned request gets the anonymous path: the call still works, but no booking data leaves.
       const left = () => BUDGET_MS - (Date.now() - t0);
       const booking: PssBooking | null = signed && caller ? await within(pss(env, trace, log).bookingByPhone(caller), left(), null) : null;
@@ -111,6 +126,10 @@ export default {
         hold_flight: hold ? hold.flightId : "",
         rebooked_confirmation: t?.rebookedTo ? spell(t.rebookedTo.confirmation) : "",
         callback_reason: offerFresh ? "seat_available" : "",
+        opening_offer: openingOffer({
+          name: booking?.first_name, city: flight ? AIRLINE.cities[flight.dest] : "", status: flight?.status, seatOffered: offerFresh,
+          hold: hold?.flightId, rebooked: t?.rebookedTo ? spell(t.rebookedTo.confirmation) : "",
+        }),
         calls_count: String(t?.calls ?? 0),
       };
       const ms = Date.now() - t0;
@@ -125,7 +144,7 @@ export default {
       log.span({ trace, op: "webhook", outcome: "error", ms: Date.now() - t0, detail: String(e?.message ?? e).slice(0, 200) });
       return Response.json({
         // Flag variables are left out so the assistant's defaults (synced by desk-ops) apply.
-        dynamic_variables: { trace_id: trace, caller_known: "false", special_assistance: "false", flight_disrupted: "false", has_active_hold: "false", tier: "none", case_status: "none" },
+        dynamic_variables: { trace_id: trace, caller_known: "false", special_assistance: "false", flight_disrupted: "false", has_active_hold: "false", tier: "none", case_status: "none", opening_offer: OFFER_ANYONE },
       });
     }
   },

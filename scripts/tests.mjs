@@ -20,19 +20,33 @@ const api = async (method, path, body) => {
 
 // The grader sees the transcript, not tool calls, so rubrics check facts against the seed data
 // instead of asking where a fact came from.
-const NO_INVENTION = { name: "Real flights only", criteria: "Any replacement flight offered is Nimbus Air N B 862, 866 or 868 from Singapore to Hong Kong on a later day, departing 9:15 AM, 2:30 PM or 8:05 PM. No other flight numbers or times appear." };
-const PHONE_MANNER = { name: "Phone manner", criteria: "Short turns, one question at a time, never lists more than two options at once." };
+const NO_INVENTION = { name: "Real flights only", criteria: "Any replacement flight offered is a Nimbus Air flight (N B 860, 862, 864, 866 or 868) from Singapore to Hong Kong on a later day, departing 7:10 AM, 9:15 AM, 11:45 AM, 2:30 PM or 8:05 PM. No other flight numbers or times appear." };
+const PHONE_MANNER = { name: "Phone manner", criteria: "Short turns, one question at a time, never offers more than three choices in one turn." };
+const DATE_THEN_TIME = { name: "Date, then time", criteria: "Asks which date the caller wants (offering dates) before offering any departure times, then offers times on the chosen date." };
 
 const TESTS = [
   {
     name: "Cancelled flight: verify, rebook, confirm",
     // Each test uses its own booking: the suite runs tests in parallel against shared state.
-    instructions: "You are Jun Ong. Your Nimbus Air flight from Singapore to Hong Kong today was cancelled because of the typhoon. Your booking code is K7Q2ZX and your last name is Ong. Ask to move to the earliest flight that works, accept the first option offered, and say yes clearly when asked to confirm. Write down the confirmation code.",
+    instructions: "You are Jun Ong. Your Nimbus Air flight from Singapore to Hong Kong today was cancelled because of the typhoon. Your booking code is K7Q2ZX and your last name is Ong. Ask to rebook. When asked which day, choose the second day offered; when offered times, choose the earliest. Say yes clearly when asked to confirm. Write down the confirmation code.",
     rubric: [
       { name: "Verifies first", criteria: "Asks for the booking code and last name before changing anything." },
+      DATE_THEN_TIME,
+      { name: "Free change", criteria: "Says the change is free (waived because of the typhoon or the cancellation) and never asks the caller to pay a change fee." },
       { name: "Holds then confirms", criteria: "Holds seats on the chosen flight, reads back the flight, date, time and passengers, and asks for a clear yes before confirming." },
       { name: "Code read back", criteria: "Gives a confirmation code and reads it letter by letter." },
       NO_INVENTION, PHONE_MANNER,
+    ],
+  },
+  {
+    // An unaffected route on the typhoon day: the waiver doesn't apply, so the change has a fee.
+    name: "Normal change costs 100 dollars",
+    instructions: "You are Daniel Hughes, booking code H8N6CU, last name Hughes. Your flight from Singapore to Tokyo is operating normally but you want to fly on a different day. When asked which day, choose the first day offered that isn't today; when offered times, choose the latest one offered. Accept the change fee and say yes clearly when asked to confirm.",
+    rubric: [
+      DATE_THEN_TIME,
+      { name: "Fee quoted", criteria: "States a change fee of 100 Singapore dollars before asking the caller to confirm, and repeats it in the read-back or the confirmation." },
+      { name: "Real flights only", criteria: "Any flight offered is a Nimbus Air flight from Singapore to Tokyo (N B 802, 804 or 806), departing 8:40 AM, 12:20 PM or 3:05 PM." },
+      { name: "Code read back", criteria: "Gives a confirmation code and reads it letter by letter." },
     ],
   },
   {
@@ -79,7 +93,7 @@ const TESTS = [
     // and the demo on a phone call.
     name: "Mandarin speaker",
     destination: MANDARIN_DESK,
-    instructions: "You speak only Mandarin Chinese. Say: 你好，我的航班取消了，可以用中文帮我吗？ When asked for your booking details, give booking code H8N6CU and last name Hughes. Each turn, move the conversation forward in Mandarin: ask about the options for your cancelled flight, then about the cost or the timing of whichever option they mention. Never switch to English and never end the conversation yourself.",
+    instructions: "You speak only Mandarin Chinese. Say: 你好，我的航班取消了，可以用中文帮我吗？ When asked for your booking details, give booking code L9W3PE and last name Lim. Each turn, move the conversation forward in Mandarin: ask about the options for your cancelled flight, then about the cost or the timing of whichever option they mention. Never switch to English and never end the conversation yourself.",
     rubric: [{ name: "Continues in Chinese", criteria: "The replies are in Mandarin Chinese and help with the caller's request (acknowledging the cancellation, asking for details, or offering options), rather than repeating a transfer line or switching to English." }],
   },
 ];

@@ -12,7 +12,7 @@ Caller (phone) ──▶ Telnyx-managed: AI Assistant + Conversation Workflow
         ┌────────────────┼──────────────────────────┐
         ▼                ▼                          ▼
   desk-dv (webhook)  desk-mcp (MCP)          desk-ops (console/canary)
-  answers in <1.2s   9 tools + owns the     watches everything,
+  answers in <1.2s   11 tools + owns the    watches everything,
   binds identity     four shared actors     never in the call path
         │                │
         └──────▶ desk-pss (mock reservation system + SQL)  ◀── the "airline's system"
@@ -26,7 +26,7 @@ Caller (phone) ──▶ Telnyx-managed: AI Assistant + Conversation Workflow
 | `desk-pss` — mock reservation system | Edge Function + SQL | Plays the airline's system of record; a REST boundary with a partner key keeps the integration honest |
 | `desk-ops` — console, canary, surge | Edge Function + actors | Must keep working (and watching) when everything else is broken; holds the write-access controls |
 | KV (`desk-kv`) | Edge KV | Flags, trace spans, outbound-call config — reads that tolerate staleness |
-| Object storage (`nimbus-desk-*`, ap-southeast-1) | Telnyx Cloud Storage | Policy documents, itinerary receipts — documents, not keys |
+| Object storage (`nimbus-desk-*`, ap-southeast-1) | Telnyx Cloud Storage | Policy documents (pushed by `scripts/upload-policies.mjs`), itinerary receipts — documents, not keys |
 
 State is deliberately split three ways: **actors** for per-entity read-modify-write that must
 be serialised, **KV** for read-mostly values where 10 s of staleness is fine, **function
@@ -45,23 +45,51 @@ memory** for pure calculations (option ranking, spoken formatting).
 - Authentication to the MCP server is a static bearer (an integration secret only the
   assistant holds) — per-call credentials don't survive chat (DEBUGLOG #8).
 
-## 3. The conversation workflow (13 nodes, 36 edges)
+## 3. The conversation workflow (14 nodes, 40 edges)
 
-- Three node kinds: **speak** (verbatim disclosure, incident notice, refund rights), **prompt**
-  (append-mode instructions over a shared base), **tool** (no LLM turn: the handoff gate, the
-  transfers, hangup).
-- Three edge kinds: **expression** (deterministic: special assistance, human-queue status
-  code, the 5-minute timer), **LLM** (what the caller wants), **default**.
+- Three node kinds: **speak** (the verbatim opening — disclosure, incident notice and the
+  choices — and refund rights), **prompt** (append-mode instructions over a shared base),
+  **tool** (no LLM turn: the handoff gate, the transfers).
+- Three edge kinds: **expression** (8, deterministic: special assistance, human-queue status
+  code, the 5-minute timer), **LLM** (27, what the caller wants), **default** (5).
+- **The opening is worded by the webhook.** `opening_offer` ends the speak node, so every
+  caller hears the choices at pickup: rebook, cancel, or a person. For a known caller it is
+  personal ("Hi Jun. Your flight to Hong Kong is cancelled. I can rebook you onto another flight
+  for free, cancel it for a full refund, or connect you with a person."); otherwise it is the
+  anonymous version, which is also the assistant's default variable. Triage then only picks a
+  transition.
+- **Rebooking is two questions, date then time.** `find_dates` lists the days in the next week
+  with seats for the whole party; `find_flights` lists that day's times (up to three offered at
+  once) and its full flights, for the waitlist. Then `hold_seats`, a read-back with the fee,
+  and a yes.
+- **Cancel splits on who cancelled.** If Nimbus cancelled or delayed the flight, the caller
+  gets the verbatim refund rights and `request_refund`; otherwise the fare becomes travel credit
+  for 12 months (`cancel_booking`: reservation system `POST /v1/bookings/:code/cancel`, a `CR…`
+  reference, seats returned, the Trip's status `cancelled`).
+- **The change fee** ([`shared/fees.ts`](../shared/fees.ts)) is one flat 100 Singapore dollars
+  per booking, the same for every option, waived under the Typhoon Koinu waiver (the typhoon
+  scenario on a route through Hong Kong) or when Nimbus cancelled the original flight. Three
+  tools quote it; `confirm_rebooking` charges it, on the receipt and as a change-log row in the
+  reservation system.
 - **Tool scoping per node**: `hangup` exists only on wrap-up; transfer is reachable only
   behind the gate — the model cannot transfer around the human-queue check. MCP tools are
   assistant-wide (a platform constraint, DEBUGLOG #4), so the server enforces the business
-  rules itself: no confirm without a live hold, no refund unless disrupted, no callback while
-  an agent is free, verification lockout after three failures.
+  rules itself: no confirm without a live hold, no hold on a flight `find_flights` couldn't have
+  offered (another route, the original flight, or one leaving within 90 minutes), no refund
+  unless disrupted, no voluntary cancel when a refund is due, no callback while an agent is
+  free, verification lockout after three failures.
 - **The timing gotcha** (DEBUGLOG #12): on calls, a prompt node's expression edges run when the
   caller next speaks. Deterministic hops that must happen *now* (the opening, the gate) are
   speak/tool nodes, which advance on their own.
+- **On a call, an LLM edge is a tool** (DEBUGLOG #21). Telnyx offers each one to the model as
+  `transition__<edge id>`, and the edge fires only when the model calls it; chat judges edges in
+  a separate model call. Tool names must match `[A-Za-z0-9_-]{1,64}`, so edge ids are short
+  (`triage_mandarin`, `rebook_confirm`) and `tests/flow.test.ts` checks every id against
+  `^[a-z0-9_]{1,52}$`. Node instructions also say when to call each transition, or the model
+  does the next step's work itself and the flow never moves.
 - Multi-assistant routing: the Mandarin desk is a second assistant with its own model (Kimi-K2.6),
-  voice and STT, and no refund tool. GLM drifted into English there; Kimi didn't.
+  voice and STT, and every MCP tool except `request_refund` and `cancel_booking`. GLM drifted
+  into English there; Kimi didn't.
 
 ## 4. Latency engineering (the caller only hears the dead air)
 
@@ -101,6 +129,9 @@ What we did about it:
   oversold.
 - Per-passenger case state lives in a `Trip` actor (one per booking), written by tools and read
   by the webhook — a shared actor across three functions.
+- The schedule is a week of daily departures (five to Hong Kong, three to Tokyo): 56 `Flight`
+  actors per scenario load. `desk-ops` initialises them in batches of 12, not one burst, because
+  a burst of actor work once took the actor host down (DEBUGLOG #14).
 - `Metrics` is a single actor (fine at demo volume, would shard by minute); `Canary` alarms
   every 60 s; `Trip` alarms place outbound AI callbacks; `CallSession` has a TTL alarm so
   per-turn chat traces don't pile up.
@@ -121,9 +152,18 @@ What we did about it:
 
 ## 7. The debugging trail (one paragraph per bug)
 
-Seventeen real bugs are in [DEBUGLOG.md](../DEBUGLOG.md); each has symptom, evidence, cause,
-fix. The four most instructive:
+Twenty-one entries are in [DEBUGLOG.md](../DEBUGLOG.md); each has symptom, evidence, cause,
+fix. The five most instructive:
 
+- **#21 — every call hung while every chat test passed.** The opening played, the caller spoke,
+  and nothing came back. A harness with no phone (a *test caller* assistant phoning the desk's
+  SIP address, now `scripts/voice-test.mjs`) made each try a one-minute call, so it could be
+  bisected: a bare assistant worked, the desk with no workflow worked, and the full workflow
+  minus one edge worked; every variant with that edge hung. On calls each LLM edge is a tool
+  named `transition__<edge id>`, and the Mandarin edge's id had a colon and, with the prefix,
+  ran to 72 characters, breaking the `[A-Za-z0-9_-]{1,64}` tool-name rule. Fixed with short ids
+  and a unit test. #20, which blamed the speak-node opening, was the wrong theory; the opening
+  is a speak node again.
 - **#14 — the actor host died and the platform kept routing to it.** The surge created ~200
   idle Trip actors; their mass eviction crashed the platform's own runtime (`Maximum call stack
   size exceeded` in sqlite close during deactivation). Recovery: re-ship (new container).
@@ -140,13 +180,22 @@ fix. The four most instructive:
 
 ## 8. Test strategy
 
-- **Unit tests** (Node's built-in runner, 15 tests): option ranking, NATO spelling, spoken
-  time/date, date arithmetic, trace parsing — plus the Flight actor's hold/confirm/waitlist
-  behaviour with a fake clock.
-- **Scenario suite**: 7 rubric-graded end-to-end tests through Telnyx's own test runner
-  (simulated callers), currently **7/7** (`docs/evidence/tests-2026-10-11-14-32.md`). The
-  failures earlier in the day were real bugs (missing refund reference, confirm-without-yes, a
-  fragmented lockout counter, the booking overwrite) — each fixed and documented.
+- **Unit tests** (Node's built-in runner, 22 tests): flight eligibility, dates and departures,
+  the change fee, the seed schedule, NATO spelling, spoken time/date, date arithmetic, trace
+  parsing — plus the Flight actor's hold/confirm/waitlist behaviour with a fake clock, and the
+  workflow's shape (`tests/flow.test.ts`: every edge id a valid transition tool name, edges
+  connect real nodes, date asked before time).
+- **Scenario suite (chat)**: 8 rubric-graded end-to-end tests through Telnyx's own test runner
+  (simulated callers). The 7-test version ran **7/7** (`docs/evidence/tests-2026-10-11-14-32.md`);
+  the eighth, *Normal change costs 100 dollars*, and the date-then-time rubrics came with the fee
+  and the two-step rebooking. The failures earlier in the day were real bugs (missing refund
+  reference, confirm-without-yes, a fragmented lockout counter, the booking overwrite) — each
+  fixed and documented.
+- **Voice scenarios** (`scripts/voice-test.mjs`): AI-to-AI calls over SIP through the real voice
+  pipeline, because chat can't see voice-only failures (DEBUGLOG #21): `rebook-typhoon`,
+  `rebook-fee`, `cancel-refund`, `cancel-credit`, `person` (human queue full, so it ends in a
+  callback and nothing dials a real phone) and `mandarin`. Each checks the desk's transcript and
+  tool order and writes `docs/evidence/voice-*.md`.
 - **Load evidence**: the stampede lab and the surge (200 concurrent passengers, p50/p95 per
   passenger, races-lost counter).
 
@@ -158,5 +207,8 @@ fix. The four most instructive:
   from the airline's own system with retried write-backs (today a failed write-back is logged
   `ticketing: pending`).
 - Chat is not the product channel: the webhook runs late in chat and the assistant-edge handoff
-  stalls (DEBUGLOG #6, #17); the suite targets the Mandarin desk directly for that reason.
-- The voucher policy fixed in the repo needs a manual bucket update (no S3 keys in the repo).
+  stalls (DEBUGLOG #6, #17); the suite targets the Mandarin desk directly for that reason. And
+  transitions work differently on a call (DEBUGLOG #21), so every workflow change gets a voice
+  run as well as the chat suite.
+- The change fee and travel credit are recorded, not collected: there is no payment step, and no
+  tool redeems a credit reference yet.

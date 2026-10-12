@@ -1,5 +1,5 @@
 // The surge simulator: hundreds of stranded passengers rebooking at once, through the same MCP
-// tools the phone assistant calls (find_alternatives -> hold_seats -> confirm_rebooking, or
+// tools the phone assistant calls (find_dates -> find_flights -> hold_seats -> confirm_rebooking, or
 // join_waitlist when nothing is left). Runs from an actor alarm in waves, so it isn't bound by a
 // request's 60 s limit and the console can watch seats drain live. Voice is not simulated:
 // concurrency of calls is the platform's job; this exercises the shared state behind them.
@@ -84,7 +84,8 @@ export class Surge extends StatefulActor {
 
 type Outcome = "rebooked" | "waitlisted" | "errors";
 
-/** One simulated passenger: look, try the first or second option, confirm or fall back to the waitlist. */
+/** One simulated passenger: pick a date, then a time (usually the earliest of each), hold and
+ *  confirm; a lost seat race tries again, and nothing left means the waitlist. */
 async function passenger(code: string, token: string, waitlistFlight: string): Promise<{ outcome: Outcome; raceLost: boolean; ms: number }> {
   const t0 = Date.now();
   const call = async (name: string, args: object = {}) => {
@@ -99,9 +100,11 @@ async function passenger(code: string, token: string, waitlistFlight: string): P
   let raceLost = false;
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const alt = await call("find_alternatives");
-      const options: { flight_id: string }[] = alt.options ?? [];
-      if (!options.length) break;
+      const { dates = [] }: { dates?: { date: string }[] } = await call("find_dates");
+      if (!dates.length) break;
+      const day = dates[Math.random() < 0.7 ? 0 : Math.min(1, dates.length - 1)];
+      const { options = [] }: { options?: { flight_id: string }[] } = await call("find_flights", { date: day.date });
+      if (!options.length) { raceLost = true; continue; }
       const pick = options[Math.random() < 0.7 ? 0 : Math.min(1, options.length - 1)];
       const held = await call("hold_seats", { flight_id: pick.flight_id });
       if (!held.held) { raceLost = true; continue; }

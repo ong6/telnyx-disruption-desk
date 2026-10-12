@@ -1,6 +1,6 @@
 // Client for the airline's reservation system (desk-pss). Reads go through a short in-process
 // cache so a surge of callers asking about the same flights doesn't hammer the system of record;
-// writes (rebook, refund) go straight through. The trace id travels in x-trace-id.
+// writes (rebook, refund, cancel) go straight through. The trace id travels in x-trace-id.
 //
 // Not KV: measured from a function, a KV read takes 1.2-1.7 s, longer than the reservation call
 // it would save (about 300 ms). See DEBUGLOG.md.
@@ -50,8 +50,9 @@ export function pss(env: any, trace: string, log?: { span: (s: any) => void }) {
     flights: (origin: string, dest: string, from: string, to: string) =>
       call<PssFlight[]>(`/v1/flights?origin=${origin}&dest=${dest}&from=${from}&to=${to}`, {}, 20),
     flight: (number: string, date: string) => call<PssFlight | null>(`/v1/flights/${number}/${date}`, {}, 20),
-    rebook: (code: string, body: { flight: string; date: string; confirmation: string }) =>
+    rebook: (code: string, body: { flight: string; date: string; confirmation: string; fee: number }) =>
       call<PssBooking>(`/v1/bookings/${code}/rebook`, { method: "POST", body: JSON.stringify(body) }),
     refund: (code: string, reason: string) => call<{ refund_ref: string }>(`/v1/bookings/${code}/refund`, { method: "POST", body: JSON.stringify({ reason }) }),
+    cancel: (code: string) => call<{ credit_ref: string }>(`/v1/bookings/${code}/cancel`, { method: "POST", body: "{}" }),
   };
 }

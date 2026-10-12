@@ -11,7 +11,7 @@ const URLS = { mcp: "https://desk-mcp-299d7f49-1.telnyxcompute.com", dv: "https:
 const KV_NAMESPACE = "22a353f3-671d-4118-87f3-04ba6a1070aa";
 const VOICE_EN = "Telnyx.Ultra.f786b574-daa5-4673-aa0c-cbe3e8534c02";
 const VOICE_ZH = "Telnyx.Ultra.6eb8965c-e295-47bd-a9e4-3eeebb3abcff"; // Jing - Clear Coordinator
-const ALL_TOOLS = ["verify_booking", "get_trip_status", "find_alternatives", "hold_seats", "confirm_rebooking", "request_refund", "join_waitlist", "request_callback", "get_policy"];
+const ALL_TOOLS = ["verify_booking", "get_trip_status", "find_dates", "find_flights", "hold_seats", "confirm_rebooking", "request_refund", "cancel_booking", "join_waitlist", "request_callback", "get_policy"];
 
 async function api(method, path, body) {
   const res = await fetch(`${API}${path}`, {
@@ -31,11 +31,13 @@ const list = async (path) => {
 
 const BASE_INSTRUCTIONS = `You are the phone assistant for Nimbus Air, a Singapore airline. You help passengers whose flights are disrupted, and with simple questions on normal days.
 
+What you can do for a caller: rebook them onto another date and time, cancel their flight, answer questions about their trip or our policies, or connect them with a person.
+
 How you speak (this is a phone call):
-- Short sentences. One question at a time. Never list more than two options at once.
+- Short sentences. One question at a time. Offer at most three choices in one turn.
 - Say flight numbers and codes letter by letter, using the "spelled" version a tool returns.
-- Filler first: before calling any tool, say one short line — "Let me check that for you" or "One moment." Never make it a question, never repeat it twice in a row.
-- Only offer flights a tool returned. Policy answers only from get_policy. If a tool result has a "say" line, say it. If no tool answered, say our system is not reachable right now and offer a colleague or a callback — never fill in a flight, time or price yourself.
+- Before a booking or lookup tool, say one short line first — "Let me check that for you" or "One moment." Never make it a question, never repeat it twice in a row.
+- Only offer dates, flights and fees a tool returned. Policy answers only from get_policy. If a tool result has a "say" line, say it. If no tool answered, say our system is not reachable right now and offer a colleague or a callback — never fill in a flight, time or price yourself.
 - Before changing anything, say what will happen and get a clear yes. If a tool returns not_verified, verify the caller first (booking code and last name). If a tool fails, apologise in one sentence, call it once more, then offer a person or a callback. Never guess.
 - If the caller asks for a person, don't argue: route them. Never say you only speak English; Chinese speakers are routed to the Chinese-speaking desk.
 
@@ -51,7 +53,9 @@ const MANDARIN_INSTRUCTIONS = `LANGUAGE RULE: Always reply in Simplified Chinese
 你是 Nimbus Air（新加坡航空公司）的中文电话客服。转接已经完成：你就是中文服务台本身。绝不要说你正在转接或"请稍等接通中文服务"——直接用中文问候乘客并开始帮助。第一次回复请说：您好，这里是 Nimbus Air 中文服务，请问有什么可以帮您？请全程用简体中文普通话回答，语气亲切、句子简短，一次只问一个问题。
 
 规则：
-- 只提供工具返回的航班，绝不编造航班、时间、座位或费用。政策问题只根据 get_policy 回答。
+- 只提供工具返回的日期、航班和费用，绝不编造航班、时间、座位或费用。政策问题只根据 get_policy 回答。
+- 改签：先用 find_dates 问乘客想改到哪一天（每次最多说三个日期），日期确定后再用 find_flights 提供当天的起飞时间（每次最多三个），乘客选好后用 hold_seats 保留座位，复述航班、日期、时间和改签费并取得明确同意后再调用 confirm_rebooking。改签费以工具返回的为准。
+- 退款或取消：请为乘客转接人工服务。
 - 更改任何预订前，先复述内容并取得乘客明确同意。
 - 航班号和确认码请逐个字母、数字读出（使用工具返回的 spelled 字段，可用中文读数字）。
 - 如果工具返回 not_verified，先请乘客提供六位订位代码和姓氏，再调用 verify_booking。
@@ -64,6 +68,7 @@ const DEFAULT_VARS = {
   disruption_mode: "off", incident_notice: "", flight_disrupted: "false", tier: "none", special_assistance: "false",
   human_queue: "open", case_status: "none", has_active_hold: "false", hold_minutes_left: "", hold_flight: "",
   rebooked_confirmation: "", callback_reason: "", calls_count: "0",
+  opening_offer: "I can rebook or cancel your flight, or connect you with a person. How can I help?", // desk-dv OFFER_ANYONE
 };
 
 async function upsertByName(listPath, createPath, updatePath, name, body, nameField = "name") {
@@ -129,7 +134,9 @@ async function main() {
     dynamic_variables_webhook_url: `${URLS.dv}/`,
     dynamic_variables_webhook_timeout_ms: 8000,
     dynamic_variables: DEFAULT_VARS,
-    mcp_servers: [{ id: mcp.id, allowed_tools: ALL_TOOLS.filter((t) => t !== "request_refund") }],
+    // Refunds and cancellations move money: the main desk reads the verbatim refund-rights
+    // statement first, so the Mandarin desk hands those to a person instead.
+    mcp_servers: [{ id: mcp.id, allowed_tools: ALL_TOOLS.filter((t) => t !== "request_refund" && t !== "cancel_booking") }],
     tool_ids: [transfer.id, hangup.id],
     enabled_features: ["telephony"],
   };
@@ -174,14 +181,10 @@ async function main() {
     telephony_settings: { supports_unauthenticated_web_calls: true, time_limit_secs: 900 },
     // The ops console embeds <telnyx-ai-agent>; it renders nothing until widget_settings exist.
     widget_settings: { theme: "dark", position: "static", default_state: "expanded", start_call_text: "Talk to the desk", agent_thinking_text: "Checking...", speak_to_interrupt_text: "Speak to interrupt" },
-    // Interruption: the caller can interrupt normally, but not while the opening plays. On the
-    // speak-node opening a mid-greeting interruption preceded both voice calls that hung
-    // (DEBUGLOG #20); the platform's own greeting text can be delivered without barging in.
-    interruption_settings: {
-      enable: true,
-      disable_greeting_interruption: true,
-      start_speaking_plan: { wait_seconds: 0.1, transcription_endpointing_plan: { on_punctuation_seconds: 0.1, on_no_punctuation_seconds: 0.1, on_number_seconds: 0.1 } },
-    },
+    // Callers can interrupt, including during the opening. disable_greeting_interruption was
+    // tried during DEBUGLOG #20 and swallowed the caller's first words; it stays explicitly off
+    // because an update that omits the field keeps the old value.
+    interruption_settings: { enable: true, disable_greeting_interruption: false },
     conversation_flow: flow,
   };
   const main = await upsertByName("/ai/assistants", "/ai/assistants", { method: "POST", path: (id) => `/ai/assistants/${id}` }, mainBody.name, mainBody);
