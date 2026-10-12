@@ -94,7 +94,7 @@ The alarm frees the seat promptly and offers it to the waitlist.
 
 ## The conversation workflow
 
-14 nodes and 40 edges (27 LLM, 8 expression, 5 default), built as data in
+14 nodes and 41 edges (27 LLM, 9 expression, 5 default), built as data in
 [`assistant/flow.mjs`](assistant/flow.mjs) and applied with
 [`assistant/build.mjs`](assistant/build.mjs).
 
@@ -109,7 +109,7 @@ The alarm frees the seat promptly and offers it to the waitlist.
 | `n_refund` | prompt, append, MCP | Refund, or explain why not and offer a change | done → wrap up; changed mind → rebook |
 | `n_waitlist` | prompt, append, MCP | Waitlist plus automatic callback; hotel and meal voucher | done |
 | `n_faq` | prompt, append, MCP | Flight status and policy, from tools only | rebook / cancel / done → wrap up |
-| `n_handoff_gate` | tool (`check_human_queue`) | Asks `desk-ops` whether a person is free, with no model turn | `telnyx_last_tool_status_code == 200` → transfer, default → callback |
+| `n_handoff_gate` | tool (`check_human_queue`) | Asks `desk-ops` whether a person is free, with no model turn | `telnyx_last_tool_status_code == "200"` (calls) or `== 200` (chat), one edge each → transfer; default → callback |
 | `n_human`, `n_specialist` | tool (transfer) | Warm transfer; the agent hears a summary first | default → callback, only if the transfer fails |
 | `n_callback` | prompt, MCP | Book a callback from a person | done |
 | `n_wrap` | prompt, hangup tool | Anything else? Goodbye | — |
@@ -195,13 +195,27 @@ Two suites now, because chat passed while every call hung (DEBUGLOG #21):
   full, so it ends in a callback and nothing dials a real phone) and `mandarin`. Results go to
   `docs/evidence/voice-*.md`.
 
-TODO(evidence): voice and chat runs pending
+Results on the finished build (Oct 12–13; Telnyx KV was failing on and off at the time, DEBUGLOG #23):
+
+| Path | Voice (AI-to-AI call) | Chat |
+|---|---|---|
+| Typhoon rebook: date, then time, free under the waiver, hold, confirm | pass ([run](docs/evidence/voice-2026-10-12-16-34.md)) | fail: shared chat sessions mixed two bookings (see the note below the table) |
+| Normal-route change: 100 dollar fee, then confirm | pass ([run](docs/evidence/voice-2026-10-12-17-01.md)) | fail: ran on a booking the voice run had already changed |
+| Cancel a typhoon-cancelled flight: refund rights read verbatim, then refund | pass | pass |
+| Cancel an operating flight: travel credit | pass | — |
+| Mandarin handoff | pass | pass (desk direct) |
+| Family of four, three failed verifications, baggage policy, ask for a person | — | pass ([run](docs/evidence/tests-2026-10-12-17-05.md)) |
+| Ask for a person on a call, with the queue full (callback) or open (transfer) | not yet: needs KV for the queue flag | — |
+
+The chat suite's scenario reset failed on that run (KV), so two tests ran on state the voice runs had
+already changed. One chat conversation also shows tool calls acting on two different bookings,
+which points at chat sessions sharing MCP identity across parallel tests; it is open (DEBUGLOG #25).
 
 ## How it meets the brief
 
 | Requirement | Where |
 |---|---|
-| Assistant with a multi-node Conversation Workflow, speak nodes, conditional edges | [`assistant/flow.mjs`](assistant/flow.mjs): 14 nodes (prompt, speak, tool) and 40 edges (expression, LLM and default) |
+| Assistant with a multi-node Conversation Workflow, speak nodes, conditional edges | [`assistant/flow.mjs`](assistant/flow.mjs): 14 nodes (prompt, speak, tool) and 41 edges (expression, LLM and default) |
 | Callable by phone | +1 743 888 2787 (TeXML app assigned by `build.mjs`) |
 | Custom MCP server, at least 3 tools | `desk-mcp`: 11 tools (`verify_booking`, `get_trip_status`, `find_dates`, `find_flights`, `hold_seats`, `confirm_rebooking`, `request_refund`, `cancel_booking`, `join_waitlist`, `request_callback`, `get_policy`) |
 | Dynamic webhook variables from an Edge Function, influencing routing | `desk-dv`: caller ID → booking, case and flags; drives `disruption_mode`, `special_assistance` and `human_queue` edges, and words the opening (`opening_offer`) |

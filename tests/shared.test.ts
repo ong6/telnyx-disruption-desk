@@ -127,3 +127,29 @@ test("openingOffer always ends with the choices, worded for what we know", async
   assert.match(openingOffer({ name: "Jun", rebooked: "Kilo, two" }), /already rebooked, and your confirmation code is Kilo, two/);
   assert.match(openingOffer({ name: "Jun", hold: "NB862-2026-10-13" }), /seat on hold/);
 });
+
+test("readConfigFast never throws when KV fails, and serves the last good flags", async () => {
+  const { readConfigFast, resetConfigCache } = await import("../shared/config.ts");
+  let failing = true;
+  const env = { KV: { get: async (k: string) => { if (failing) throw new Error("KV 503"); return k === "flags/all" ? JSON.stringify({ disruption_mode: "on" }) : null; } } };
+  const quiet = console.error;
+  console.error = () => {};
+  try {
+    resetConfigCache();
+    assert.equal(await readConfigFast(env, 50), null); // cold and failing: null, not a throw
+    failing = false;
+    assert.equal((await readConfigFast(env, 500))?.flags.disruption_mode, "on");
+    failing = true;
+    const realNow = Date.now;
+    Date.now = () => realNow() + 60_000; // stale: refreshes in the background, which fails
+    try {
+      assert.equal((await readConfigFast(env, 50))?.flags.disruption_mode, "on");
+      await new Promise((r) => setTimeout(r, 20)); // let the failed refresh settle (no unhandled rejection)
+    } finally {
+      Date.now = realNow;
+    }
+  } finally {
+    console.error = quiet;
+    resetConfigCache();
+  }
+});

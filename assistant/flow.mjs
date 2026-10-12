@@ -17,7 +17,6 @@ const s = (value) => ({ type: "string_literal", value });
 const n = (value) => ({ type: "number_literal", value });
 const cmp = (op, left, right) => ({ type: "comparison", op, left, right });
 const and = (...operands) => ({ type: "bool_op", op: "and", operands });
-const or = (...operands) => ({ type: "bool_op", op: "or", operands });
 const expr = (expression) => ({ type: "expression", expression });
 const llm = (prompt) => ({ type: "llm", prompt });
 const DEFAULT = { type: "default" };
@@ -29,7 +28,7 @@ const tool = (id, name, shared_tool_id, message) => ({ id, name, type: "tool", s
 /** Telnyx prefixes "transition__" (12 characters) and tool names allow [A-Za-z0-9_-]{1,64}. */
 export const EDGE_ID = /^[a-z0-9_]{1,52}$/;
 
-const VERIFY = "If caller_known is false and the caller isn't verified yet, ask for the 6-character booking code and their last name, then call verify_booking. If it fails, read back the code and the name you used, ask which one is wrong, and ask them to spell the name. After the third failed try, or when attempts_left is 0, tell them you're connecting them with a colleague and call the transition to a person.";
+const VERIFY = "If caller_known is false and the caller isn't verified yet, ask for the 6-character booking code and their last name, and call verify_booking once you have both. If it fails, read back the code and the name you used, ask which one is wrong, and ask them to spell the name. After the third failed try, or when attempts_left is 0, tell them you're connecting them with a colleague and call the transition to a person.";
 
 export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinAssistantId }) {
   const nodes = [
@@ -149,8 +148,10 @@ export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinA
     if (node !== "n_confirm" && node !== "n_wrap") edge(node, "n_handoff_gate", expr(cmp(">=", v("telnyx_conversation_duration_secs"), n(300))), "_timer");
     edge(node, "n_handoff_gate", llm("The caller asks for a person, an agent or a supervisor, or is very upset, or you told the caller you're connecting them with a colleague."), "_person");
   }
-  // The gate decides deterministically on the queue check's status code: "200" on calls, 200 in chat.
-  edge("n_handoff_gate", "n_human", expr(or(cmp("==", v("telnyx_last_tool_status_code"), s("200")), cmp("==", v("telnyx_last_tool_status_code"), n(200)))));
+  // The gate decides deterministically on the queue check's status code: "200" on calls, 200 in
+  // chat. One edge per form: as a single `or`, a call that got 200 went to the callback (DEBUGLOG #24).
+  edge("n_handoff_gate", "n_human", expr(cmp("==", v("telnyx_last_tool_status_code"), s("200"))));
+  edge("n_handoff_gate", "n_human", expr(cmp("==", v("telnyx_last_tool_status_code"), n(200))), "_chat");
   edge("n_handoff_gate", "n_callback", DEFAULT);
   edge("n_human", "n_callback", DEFAULT); // only used if the transfer fails
   edge("n_specialist", "n_callback", DEFAULT);

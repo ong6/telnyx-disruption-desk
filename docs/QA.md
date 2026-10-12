@@ -7,7 +7,7 @@ The feature tour is [FEATURES.md](FEATURES.md); the deep dive is [TECHNICAL.md](
 ## Talking points: the required items
 
 ### 1. AI Assistant with Conversation Workflow
-**The talking point:** "The workflow is 14 nodes and 40 edges with all three node kinds and all
+**The talking point:** "The workflow is 14 nodes and 41 edges with all three node kinds and all
 three edge kinds — and the interesting part is two call-only rules we learned the hard way. On
 calls, a prompt node's expression edges only run when the caller next speaks, so any
 deterministic hop that must happen *now* is a speak or tool node, which advances on its own. The

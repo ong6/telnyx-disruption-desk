@@ -100,17 +100,19 @@ async function callerAssistant(persona) {
 
 const messages = async (id) =>
   (await api("GET", `/ai/conversations/${id}/messages?page%5Bsize%5D=100`)).slice().reverse().map((m) => ({
-    at: (m.sent_at ?? m.created_at ?? "").slice(11, 19), role: m.role, text: typeof m.text === "string" ? m.text : JSON.stringify(m.text ?? ""),
+    ts: Date.parse(m.sent_at ?? m.created_at ?? ""), at: (m.sent_at ?? m.created_at ?? "").slice(11, 19), role: m.role, text: typeof m.text === "string" ? m.text : JSON.stringify(m.text ?? ""),
     node: m.metadata?.flow_node_id, assistant: m.metadata?.assistant_id, tools: (m.tool_calls ?? []).map((t) => t.function?.name),
   }));
 
-/** One call. Message timestamps mark when speech starts and the opening alone runs ~18 s, so
- *  "quiet" means 45 s with no new message. Returns null if the call never connected (the desk
- *  heard nothing within a minute), which happened on calls placed right after a persona update. */
+/** One call. Messages reach the API about 30 s after they are spoken, and the opening alone runs
+ *  ~18 s, so "quiet" means 90 s with no new message on either side; the desk hanging up, or the
+ *  scenario's own check, ends it sooner. After hanging up, wait for the last messages to land.
+ *  Returns null if the call never connected (the desk heard nothing within 90 s), which happened
+ *  on calls placed right after a persona update. */
 async function call(s, callerId, texmlAppId) {
   const since = new Date(Date.now() - 2000).toISOString();
   await api("POST", `/texml/ai_calls/${texmlAppId}`, { From: process.env.DESK_NUMBER, To: `sip:anonymous@${DESK}.sip.telnyx.eu`, AIAssistantId: callerId });
-  let callerConv, deskConv, desk = [];
+  let callerConv, deskConv, desk = [], caller = [];
   const t0 = Date.now();
   while (Date.now() - t0 < 300_000) {
     await sleep(5_000);
@@ -118,26 +120,32 @@ async function call(s, callerId, texmlAppId) {
     callerConv = convs.find((c) => c.metadata?.assistant_id === callerId);
     deskConv = convs.find((c) => c !== callerConv && String(c.metadata?.telnyx_agent_target ?? "").includes(DESK));
     desk = deskConv ? await messages(deskConv.id) : [];
+    caller = callerConv ? await messages(callerConv.id) : [];
     const connected = desk.some((m) => m.role === "user");
-    if (!connected && Date.now() - t0 > 60_000) break;
-    const last = Math.max(0, ...convs.map((c) => Date.parse(c.last_message_at ?? c.created_at)));
-    if (s.doneWhen?.({ desk }) || desk.some((m) => m.tools.includes("hangup")) || (connected && Date.now() - last > 45_000)) break;
+    if (!connected && Date.now() - t0 > 90_000) break;
+    const last = Math.max(t0, ...[...desk, ...caller].map((m) => m.ts || 0));
+    if (s.doneWhen?.({ desk }) || desk.some((m) => m.tools.includes("hangup")) || (connected && Date.now() - last > 90_000)) break;
   }
   const control = callerConv?.metadata?.call_control_id;
   if (control) await fetch(`${API}/calls/${encodeURIComponent(control)}/actions/hangup`, { method: "POST", headers: H, body: "{}" }).catch(() => {});
-  return desk.some((m) => m.role === "user") ? { deskConv, desk } : null;
+  await sleep(35_000);
+  desk = deskConv ? await messages(deskConv.id) : [];
+  caller = callerConv ? await messages(callerConv.id) : [];
+  return desk.some((m) => m.role === "user") ? { deskConv, desk, caller } : null;
 }
 
 async function run(name, s, callerId, texmlAppId) {
-  if (s.flags) await ops("/api/flags", s.flags);
+  // If the flags can't be written, the queue may still be open and the call would transfer to a
+  // real phone: skip the scenario instead.
+  if (s.flags && (await ops("/api/flags", s.flags)) !== 200)
+    return { name, desk: [], tools: [], attempts: 0, results: [{ check: "skipped: could not set the flags (is KV up?)", ok: false }] };
   await callerAssistant(s.persona);
   await sleep(5_000); // let the new caller version settle before dialling
   let attempts = 1;
   let r = await call(s, callerId, texmlAppId);
   if (!r) (attempts = 2), (r = await call(s, callerId, texmlAppId));
   if (s.flags) await ops("/api/flags", { human_queue: "open" });
-  const { deskConv, desk } = r ?? { desk: [] };
-  const caller = callerConv ? await messages(callerConv.id) : [];
+  const { deskConv, desk, caller } = r ?? { desk: [], caller: [] };
   const tools = desk.flatMap((m) => m.tools);
   const results = Object.entries(s.checks).map(([check, fn]) => ({ check, ok: !!fn({ desk, caller, tools }) }));
   const replied = desk.some((m) => m.role === "assistant" && m.node !== "n_open" && m.text.trim());

@@ -32,13 +32,17 @@ export async function readConfig(env: any, force = false): Promise<{ flags: Flag
 /**
  * For the webhook's hot path: never wait more than `budgetMs` for KV. Serves the last value
  * this process saw (even if stale) and refreshes it in the background; returns null on a cold
- * process whose first KV read is slower than the budget.
+ * process whose first KV read is slower than the budget, or fails. Never throws.
  */
 let refreshing: Promise<unknown> | null = null;
 export async function readConfigFast(env: any, budgetMs: number): Promise<{ flags: Flags; scenario: Scenario | null } | null> {
   const fresh = cache && Date.now() - cache.at < 10_000;
   if (fresh) return cache;
-  const load = (refreshing ??= readConfig(env, true).finally(() => (refreshing = null)));
+  // A failed refresh must never reject: with a cache, nothing awaits it, and an unhandled
+  // rejection took the process (and a hold_seats in flight) down during a KV outage (DEBUGLOG #23).
+  const load = (refreshing ??= readConfig(env, true)
+    .catch((e) => console.error(JSON.stringify({ ts: new Date().toISOString(), svc: "config", lvl: "error", ev: "kv_refresh_failed", err: String(e?.message ?? e).slice(0, 160) })))
+    .finally(() => (refreshing = null)));
   if (cache) return cache; // stale-while-revalidate
   return Promise.race([load.then(() => cache), new Promise<null>((r) => setTimeout(() => r(null), budgetMs))]);
 }

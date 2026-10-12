@@ -389,3 +389,89 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
 - **Takeaway.** For a workflow, chat is not a stand-in for a call: transitions work differently.
   Every change to the workflow now gets a voice run as well as the chat suite.
 
+
+## 22. On calls, one tool call can arrive several times: a single wrong name locked the caller out
+
+- **Symptom.** In a voice run the caller gave a misheard name once, and the next try was already
+  the last: `attempts_left` went from 3 to 1 on one failed attempt (conversation 5d7ff3fa).
+- **Evidence.** The MCP server's spans show three `verify_booking` calls within 230 ms
+  (15:54:25.233, .438 and .459) for the single call in the transcript. The same pattern appears
+  elsewhere: `confirm_rebooking` answered `ok` and, 16 s later, `declined` (no hold) for one
+  confirmation, and the call-side client opened its session with three `initialize` requests.
+  Chat never did this.
+- **Fix.** Tools that change state answer a repeat the way they answered the first call.
+  - A failed verification counts once per code and name pair.
+  - A call with no code or no name isn't an attempt: the model once called `verify_booking({})`
+    before asking.
+  - A repeated confirm returns the same confirmation code. A repeated refund or cancel returns
+    the same reference instead of a second refund.
+  - Names are compared on letters only, so a spelled "O-N-G" matches "Ong".
+- **Also learned, from the harness.**
+  - Conversation messages reach the API about 30 s after they are spoken (`created_at` trails
+    `sent_at`). The harness's first "quiet for 25 s" rule hung up live calls mid-booking.
+  - A caller assistant with the shared hangup tool attached never took a turn on a call, so the
+    harness ends calls through Call Control instead.
+
+## 23. A Telnyx KV outage during testing: what broke, and what kept working
+
+- **Symptom.** From about 15:37 UTC on Oct 12, every KV key read and list returned HTTP 500 or
+  503 (`10007 Unexpected error`), on and off for about half an hour, while the namespace reported
+  `provision_ok`. For a few minutes the Assistants API answered 503 too. The status page showed
+  nothing for KV.
+- **Seen first as** a 500 from the scenario reload. The `desk-ops` runtime logs showed the KV
+  error, and the console's `/api/state` (which reads flags and the scenario from KV) failed the
+  same way.
+- **What degraded.**
+  - Scenario loads failed, because they write the scenario and flags to KV.
+  - The console's state and trace views failed.
+  - The handoff gate's queue check timed out, so the gate offered a callback. That is its safe
+    default.
+- **What kept working.** Calls, and every booking tool. Seats and trips live in actors, bookings
+  in the reservation system's SQL database, and flags were served from each process's memory.
+  Trace spans are fire-and-forget, so they were lost without blocking a tool. A voluntary
+  cancellation went end to end on a call during the outage (conversation e12af31e).
+- **But one KV failure did break a booking.** A `hold_seats` hung until Telnyx's 15 s tool
+  timeout (conversation 6b637551). The runtime log at that moment shows an uncaught
+  `env KV get("flags/all") failed` from `readConfigFast`.
+  - With flags already cached, its background refresh was a promise nobody awaited. A failed
+    read became an unhandled rejection that can end the process mid-request.
+  - On a cold process, the same failure threw straight into the tool.
+  - Fix: the refresh can no longer reject. The caller gets the last good flags, or null on a
+    cold process, and the failure is logged. A unit test covers both cases.
+  - The gate's queue check (`/api/queue`) now uses the same cached read, so a KV blip no longer
+    turns every request for a person into a callback.
+- **Even so, the desk recovered on that call.** It apologised and retried. It re-verified when
+  the retry landed on a fresh process. When the booking system was unreachable it offered a
+  person, and when the gate couldn't check the queue it booked a callback.
+- **Takeaway.** KV holds only flags, traces and console data, which is why most of the booking
+  path survived. The console should still show its last good state with a "degraded" banner
+  instead of an error, but that isn't built.
+
+## 24. The handoff gate sent a call to the callback even though a person was free
+
+- **Evidence.** In conversation 5d7ff3fa the gate's `check_human_queue` returned
+  `{"queue":"open"}` (HTTP 200), and the call went to `n_callback`. The chat test in #13 did
+  transfer, so this is calls only.
+- **Suspected cause.** The success edge was a single `or` of `== "200"` (calls send a string)
+  and `== 200` (chat sends a number). On a call, one bad comparison may sink the whole
+  expression, so the edge never matched and the default edge won.
+- **Change.** Two edges instead, one per form, as the docs show them.
+- **Status: not yet proven on a call.** A transfer dials a real phone, so the test points the
+  transfer tool at an AI's SIP address first. The first such test ran during the KV outage: the
+  queue check got a 500, and the callback was correct.
+
+## 25. Open: in a parallel chat run, one conversation's tools acted on two bookings
+
+- **Evidence.** In the chat suite run of Oct 12, 17:05 UTC
+  (`docs/evidence/tests-2026-10-12-17-05.md`), conversation 6f5c6d06 was the Jun Ong test. Its
+  `find_flights` answered for a 4-passenger booking (the family test's), and its `hold_seats`
+  for Jun's 1-passenger booking. The tests run in parallel against one assistant.
+- **What it points at.** MCP requests carry no conversation id. The server finds the caller
+  from the traceparent, or from a pinned session, and links it to the webhook's binding
+  (`authenticate` in `desk-mcp`). If the chat runtime reuses a trace or session across parallel
+  conversations, two of them share one binding.
+- **On calls,** the same weakness has shown up the other way so far: a session that can't be
+  linked, so a confirm needed the caller re-verified (conversation 22b918e6). No call has acted
+  on another caller's booking.
+- **Status: open.** Next: log which rung of the identity ladder each request matched, run two
+  conversations at once, and fail closed (ask to verify again) whenever the rungs disagree.

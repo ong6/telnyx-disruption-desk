@@ -45,12 +45,12 @@ memory** for pure calculations (option ranking, spoken formatting).
 - Authentication to the MCP server is a static bearer (an integration secret only the
   assistant holds) — per-call credentials don't survive chat (DEBUGLOG #8).
 
-## 3. The conversation workflow (14 nodes, 40 edges)
+## 3. The conversation workflow (14 nodes, 41 edges)
 
 - Three node kinds: **speak** (the verbatim opening — disclosure, incident notice and the
   choices — and refund rights), **prompt** (append-mode instructions over a shared base),
   **tool** (no LLM turn: the handoff gate, the transfers).
-- Three edge kinds: **expression** (8, deterministic: special assistance, human-queue status
+- Three edge kinds: **expression** (9, deterministic: special assistance, human-queue status
   code, the 5-minute timer), **LLM** (27, what the caller wants), **default** (5).
 - **The opening is worded by the webhook.** `opening_offer` ends the speak node, so every
   caller hears the choices at pickup: rebook, cancel, or a person. For a known caller it is

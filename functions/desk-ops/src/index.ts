@@ -3,7 +3,7 @@
 // redeploy, add a relief flight. Also the lab routes for the stampede test.
 export { Canary } from "./canary";
 export { Surge } from "./surge";
-import { readConfig, resetConfigCache, writeFlags, type Flags, type Scenario } from "../../../shared/config";
+import { readConfig, readConfigFast, resetConfigCache, writeFlags, type Flags, type Scenario } from "../../../shared/config";
 import { URLS } from "../../../shared/endpoints";
 import { makeLogger } from "../../../shared/log";
 import { BOOKINGS, FLIGHTS, INCIDENTS, RELIEF_FLIGHT, SCHEDULE_DAYS } from "../../../shared/seed";
@@ -41,10 +41,13 @@ export default {
         return json({ now: s.now, stateBuildMs: s.stateBuildMs, degraded: s.degraded, flags: s.flags, scenario: s.scenario, flights: s.flights, canary: s.canary, surge: s.surge ? { running: s.surge.running } : null, metrics: { latency: s.metrics?.latency } });
       }
       if (path === "/api/state") return json(await state(env));
-      // Read by the workflow's handoff gate (a tool node): 200 = a person can take the call.
+      // Read by the workflow's handoff gate (a tool node): 200 = a person can take the call. The
+      // last known flags serve it, so a KV outage doesn't stop every transfer (DEBUGLOG #23);
+      // only a cold process that can't read KV answers 503, and the gate offers a callback.
       if (path === "/api/queue") {
-        const { flags } = await readConfig(env);
-        return json({ queue: flags.human_queue }, flags.human_queue === "full" ? 409 : 200);
+        const cfg = await readConfigFast(env, 1500);
+        if (!cfg) return json({ queue: "unknown" }, 503);
+        return json({ queue: cfg.flags.human_queue }, cfg.flags.human_queue === "full" ? 409 : 200);
       }
       if (path.startsWith("/api/trace/")) {
         if (!isAdmin(req, url)) return json({ error: "admin token required" }, 401);

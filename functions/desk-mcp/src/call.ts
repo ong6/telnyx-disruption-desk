@@ -9,7 +9,7 @@ export const MAX_VERIFY_ATTEMPTS = 3;
 // clears the actor so per-turn chat traces and MCP session keys don't pile up forever.
 const TTL_MS = 2 * 60 * 60 * 1000;
 
-export interface CallBinding { caller: string; booking: string; fails: number; at: number; canonical?: string }
+export interface CallBinding { caller: string; booking: string; fails: number; at: number; canonical?: string; lastFail?: string }
 
 export class CallSession extends StatefulActor {
   async get(): Promise<CallBinding> {
@@ -43,13 +43,15 @@ export class CallSession extends StatefulActor {
     await this.arm();
   }
   /** Count one failed verification; the actor is single-threaded, so the counter is exact.
-   *  Returns the attempts the caller has left (0 means locked out for this conversation). */
-  async fail(): Promise<number> {
+   *  `key` is the code and name tried: the same pair again is the same attempt, delivered twice
+   *  (DEBUGLOG #22). Returns the attempts left (0 means locked out for this conversation). */
+  async fail(key = ""): Promise<{ left: number; counted: boolean }> {
     const s = await this.get();
+    if (key && s.lastFail === key) return { left: Math.max(0, MAX_VERIFY_ATTEMPTS - s.fails), counted: false };
     const fails = s.fails + 1;
-    await this.ctx.storage.put("s", { ...s, fails, at: Date.now() });
+    await this.ctx.storage.put("s", { ...s, fails, lastFail: key, at: Date.now() });
     await this.arm();
-    return Math.max(0, MAX_VERIFY_ATTEMPTS - fails);
+    return { left: Math.max(0, MAX_VERIFY_ATTEMPTS - fails), counted: true };
   }
   /** How many attempts are left before the lockout, without counting one. */
   async attemptsLeft(): Promise<number> {

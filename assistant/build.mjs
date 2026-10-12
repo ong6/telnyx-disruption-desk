@@ -87,14 +87,23 @@ async function kvGet(key) {
 const kvPut = (key, value) => api("PUT", `/storage/kvs/${KV_NAMESPACE}/keys/${encodeURIComponent(key)}`, value);
 
 async function main() {
-  // Default variables carry the live flags too, so a late webhook still routes correctly.
-  const flags = JSON.parse((await kvGet("flags/all")) ?? "{}");
-  const scenario = JSON.parse((await kvGet("scenario/active")) ?? "null");
-  Object.assign(DEFAULT_VARS, {
-    disruption_mode: flags.disruption_mode ?? "off",
-    human_queue: flags.human_queue ?? "open",
-    incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "",
-  });
+  // Default variables carry the live flags too, so a late webhook still routes correctly. If KV
+  // can't be read, keep the flags the live assistant already has rather than resetting them to a
+  // normal day (KV failed for half an hour once, DEBUGLOG #23).
+  const [rawFlags, rawScenario] = [await kvGet("flags/all"), await kvGet("scenario/active")];
+  if (rawFlags && rawScenario) {
+    const flags = JSON.parse(rawFlags);
+    const scenario = JSON.parse(rawScenario);
+    Object.assign(DEFAULT_VARS, {
+      disruption_mode: flags.disruption_mode ?? "off",
+      human_queue: flags.human_queue ?? "open",
+      incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "",
+    });
+  } else {
+    const live = (await list("/ai/assistants")).find((a) => a.name === "Nimbus Air Disruption Desk")?.dynamic_variables ?? {};
+    for (const k of ["disruption_mode", "human_queue", "incident_notice"]) if (k in live) DEFAULT_VARS[k] = live[k];
+    console.warn("KV unreadable: kept the live assistant's flags", DEFAULT_VARS.disruption_mode, DEFAULT_VARS.human_queue);
+  }
 
   // 1. MCP server. Telnyx authenticates with a static bearer (integration secret); the server
   //    identifies the call from the W3C traceparent Telnyx sends (see desk-mcp/src/index.ts).
@@ -211,8 +220,12 @@ async function main() {
       console.log("outbound destinations", want.join(","));
     }
   }
-  if (texmlAppId) await kvPut("config/outbound", JSON.stringify({ texmlAppId, from: DESK_NUMBER, assistantId: main.id }));
-  await kvPut("config/assistants", JSON.stringify([main.id, zh.id]));
+  try {
+    if (texmlAppId) await kvPut("config/outbound", JSON.stringify({ texmlAppId, from: DESK_NUMBER, assistantId: main.id }));
+    await kvPut("config/assistants", JSON.stringify([main.id, zh.id]));
+  } catch (e) {
+    console.warn("KV config not written (the previous values stay):", e.message.slice(0, 120));
+  }
   console.log("kv config written; default flags", DEFAULT_VARS.disruption_mode, DEFAULT_VARS.human_queue);
 }
 

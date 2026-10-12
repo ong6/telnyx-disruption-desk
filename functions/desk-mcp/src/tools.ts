@@ -93,6 +93,12 @@ async function liveFlights(ctx: ToolCtx, origin: string, dest: string, from: str
   return snaps.filter((s): s is FlightSnapshot => !!s);
 }
 
+/** Names compared on letters only: a spelled "O-N-G" from a call is "Ong". */
+const letters = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^\p{L}]/gu, "");
+
+/** True if the trip's last event of this kind happened in the last two minutes. */
+const recently = (t: TripState, ev: string) => [...t.events].reverse().some((e) => e.ev === ev && Date.now() - e.at < 120_000);
+
 const isDate = (d: unknown): d is string => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d);
 
 export const TOOLS: Record<string, Tool> = {
@@ -108,14 +114,19 @@ export const TOOLS: Record<string, Tool> = {
       required: ["booking_code", "last_name"],
     },
     async run(ctx, { booking_code, last_name }) {
+      const code = String(booking_code ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const name = letters(last_name);
+      // A call made before the caller gave both isn't an attempt.
+      if (!code || !name) return { verified: false, reason: "missing_details", next: "ask the caller for their booking code and last name, then call this again" };
       const left = await session(ctx).attemptsLeft();
       if (left <= 0) return { verified: false, attempts_left: 0, next: "transfer the caller to a person" };
-      const code = String(booking_code ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-      const b = code ? await pss(ctx.env, ctx.claims.trace, ctx.log).booking(code) : null;
-      const ok = !!b && b.last_name.toLowerCase() === String(last_name ?? "").trim().toLowerCase();
-      if (!ok) {
-        if (b) await trip(ctx, b.code).verifyFailed();
-        return { verified: false, attempts_left: await session(ctx).fail(), next: "ask the caller to check the code and try again" };
+      const b = await pss(ctx.env, ctx.claims.trace, ctx.log).booking(code);
+      if (!b || letters(b.last_name) !== name) {
+        // The call-side MCP client can deliver one tool call several times (DEBUGLOG #22), so
+        // the same code and name count as one attempt.
+        const { left: attemptsLeft, counted } = await session(ctx).fail(`${code}|${name}`);
+        if (b && counted) await trip(ctx, b.code).verifyFailed();
+        return { verified: false, attempts_left: attemptsLeft, next: "read back the code and name you used, ask which is wrong, and try again" };
       }
       await session(ctx).bind(b!.code);
       return { verified: true, ...(await caseSummary(ctx, b!)) };
@@ -213,7 +224,12 @@ export const TOOLS: Record<string, Tool> = {
     async run(ctx) {
       const b = await requireBooking(ctx);
       const t: TripState | null = await trip(ctx, b.code).get();
-      if (!t?.hold) return { confirmed: false, reason: "no_hold", next: "hold a flight first" };
+      if (!t?.hold) {
+        // The same confirm delivered twice (DEBUGLOG #22) gets the same answer, not "no hold".
+        if (t?.rebookedTo && b.confirmation === t.rebookedTo.confirmation && recently(t, "rebooked"))
+          return { confirmed: true, confirmation_code: b.confirmation, spelled: spell(b.confirmation), say: `You're confirmed. Your new confirmation code is ${spell(b.confirmation)}.` };
+        return { confirmed: false, reason: "no_hold", next: "hold a flight first" };
+      }
       const r = await flight(ctx, t.hold.flightId).confirm(t.hold.holdId, b.code);
       if (!r.ok) return { confirmed: false, reason: r.reason, next: "apologise that the hold expired, run find_flights again for the same date" };
       const target: FlightSnapshot = await flight(ctx, t.hold.flightId).snapshot();
@@ -246,6 +262,9 @@ export const TOOLS: Record<string, Tool> = {
     inputSchema: { type: "object", properties: { reason: { type: "string" } } },
     async run(ctx, { reason }) {
       const b = await requireBooking(ctx);
+      // Already refunded (or the same request delivered twice): the same answer, not a second refund.
+      if (b.status === "refunded" && b.refund_ref)
+        return { refunded: true, refund_reference: b.refund_ref, spelled: spell(b.refund_ref), timeline: "back on the original card within 7 business days", say: `Your refund is done. The reference is ${spell(b.refund_ref)}.` };
       const orig = await pss(ctx.env, ctx.claims.trace, ctx.log).flight(b.flight, b.date);
       if (orig?.status !== "cancelled" && orig?.status !== "delayed")
         return { refunded: false, reason: "not_eligible", next: "explain the fare is non-refundable for a voluntary cancellation; offer to change the flight instead" };
@@ -269,7 +288,9 @@ export const TOOLS: Record<string, Tool> = {
     inputSchema: { type: "object", properties: {} },
     async run(ctx) {
       const b = await requireBooking(ctx);
-      if (b.status === "cancelled" || b.status === "refunded") return { cancelled: false, reason: `already_${b.status}`, next: "tell the caller the booking is already closed and give the reference from get_trip_status" };
+      if (b.status === "cancelled" && b.refund_ref)
+        return { cancelled: true, travel_credit_reference: b.refund_ref, spelled: spell(b.refund_ref), valid_for: "12 months", say: `Your booking is cancelled. Your travel credit reference is ${spell(b.refund_ref)}, valid for 12 months.` };
+      if (b.status === "refunded") return { cancelled: false, reason: "already_refunded", next: "tell the caller the booking was already refunded and give the reference from get_trip_status" };
       const orig = await pss(ctx.env, ctx.claims.trace, ctx.log).flight(b.flight, b.date);
       if (orig?.status === "cancelled" || orig?.status === "delayed")
         return { cancelled: false, reason: "refund_eligible", next: "their flight was disrupted, so they're entitled to a full refund: use request_refund instead" };
