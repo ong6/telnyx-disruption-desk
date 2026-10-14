@@ -17,7 +17,7 @@ per requirement is [docs/QA.md](docs/QA.md).
 
 | What | Where |
 |---|---|
-| **Talk to it in your browser** | The ops console's *Talk to the desk* button (a WebRTC call to the same assistant) |
+| **Talk to it in your browser** | Open the [ops console](https://desk-ops-68bad318-0.telnyxcompute.com) and press **Talk to the desk** — a WebRTC call to the same assistant as the phone line, from any browser (allow the microphone). While the console's **web calls as demo caller** flag is on, you're greeted as the demo passenger; turned off, you arrive unrecognised — say a booking code and last name from the table below |
 | Call the desk | **+1 743 888 2787**. This runs on a Telnyx trial account, which only accepts calls from its verified number, so the phone line is shown live on demo day and the browser call works for everyone else |
 | Ops console (live seats, calls, traces, health) | https://desk-ops-68bad318-0.telnyxcompute.com |
 | MCP server (Streamable HTTP, POST only) | https://desk-mcp-299d7f49-1.telnyxcompute.com/mcp |

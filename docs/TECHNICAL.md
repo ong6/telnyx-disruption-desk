@@ -180,7 +180,7 @@ fix. The five most instructive:
 
 ## 8. Test strategy
 
-- **Unit tests** (Node's built-in runner, 22 tests): flight eligibility, dates and departures,
+- **Unit tests** (Node's built-in runner, 24 tests): flight eligibility, dates and departures,
   the change fee, the seed schedule, NATO spelling, spoken time/date, date arithmetic, trace
   parsing — plus the Flight actor's hold/confirm/waitlist behaviour with a fake clock, and the
   workflow's shape (`tests/flow.test.ts`: every edge id a valid transition tool name, edges

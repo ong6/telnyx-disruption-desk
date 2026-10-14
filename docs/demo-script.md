@@ -1,7 +1,9 @@
 # Demo script (about 10 minutes, then a 7–10 minute walkthrough)
 
 Open before starting: the ops console, the GitHub repo, a terminal with
-`telnyx-edge logs desk-mcp --tail`, and the phone.
+`telnyx-edge logs desk-mcp --tail`, and the phone. On the console, check the header says
+**web calls as demo caller: on** — toggle it under *More controls* if not, so the browser calls
+below answer as the demo passenger.
 
 ## 1. The problem (30 s)
 

@@ -31,7 +31,8 @@ export OPENCODE_TELNYX_MODELS_PATH=$PWD/.opencode/telnyx-models.json
 npx opencode models telnyx
 ```
 
-Config: [`.opencode/opencode.json`](.opencode/opencode.json) (plugin active, default model
+Config: [`opencode.json`](opencode.json) at the repo root — the copy reviewers expect, identical
+to [`.opencode/opencode.json`](.opencode/opencode.json) (plugin active, default model
 `telnyx/zai-org/GLM-5.3-Flash`). Enabled models:
 [`.opencode/telnyx-models.json`](.opencode/telnyx-models.json).
 

@@ -97,7 +97,7 @@ serialises; last-write-wins oversells.
 |---|---|---|
 | 1 | Phone line + browser widget on the same assistant | README "Try it" |
 | 2 | Caller recognition by phone; code+name verification for unknown callers | `desk-dv`, `verify_booking` |
-| 3 | 14-node, 40-edge conversation workflow: speak, prompt and tool nodes; LLM, expression and default edges | `assistant/flow.mjs` |
+| 3 | 14-node, 41-edge conversation workflow: speak, prompt and tool nodes; LLM, expression and default edges | `assistant/flow.mjs` |
 | 4 | Multi-assistant routing to a Mandarin desk (own model, voice, STT, tools) | `assistant/build.mjs` |
 | 5 | 11-tool MCP server with server-side business rules (date then time, hold only what was offered, fee computed on the server) | `desk-mcp` |
 | 6 | Dynamic-variables webhook that answers inside the platform's ~1.2 s cutoff, with graceful fallback | `desk-dv` |
