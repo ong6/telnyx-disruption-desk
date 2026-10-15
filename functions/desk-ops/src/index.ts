@@ -63,7 +63,11 @@ export default {
         const flags = await writeFlags(env, patch);
         log.info("flags", { patch });
         if ("disruption_mode" in patch || "human_queue" in patch || "handoff" in patch) await syncAssistantDefaults(env, log);
-        if ("fault" in patch) await env.CANARY.idFromName("main").probeSoon();
+        if ("fault" in patch) {
+          // The switch desk-mcp actually reads lives in the Metrics actor; KV stays for the console pill.
+          await env.METRICS.idFromName("global").setFault(patch.fault);
+          await env.CANARY.idFromName("main").probeSoon();
+        }
         return json(flags);
       }
       if (path === "/api/relief" && req.method === "POST") {

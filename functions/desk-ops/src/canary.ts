@@ -32,10 +32,10 @@ export class Canary extends StatefulActor {
     await this.ctx.storage.deleteAlarm();
     return { running: false };
   }
-  // desk-mcp serves its last cached flags and refreshes in the background: the first probe
-  // after a flip warms the flag cache, and only the next probes see the new state. So probe
-  // 12 s after the flip to warm the cache, then repeat every 10 s a few times (quick).
-  async probeSoon(ms = 12_000) {
+  // The fault switch now lives in an actor read at most 3 s stale, not the 10 s KV flag
+  // cache, so a probe 5 s after the flip already sees the new state. Repeat every 10 s a few
+  // times (quick) to confirm.
+  async probeSoon(ms = 5_000) {
     if (!(await this.ctx.storage.get("running"))) return { running: false };
     await this.ctx.storage.put("quick", 3);
     await this.ctx.storage.setAlarm(Date.now() + ms);
