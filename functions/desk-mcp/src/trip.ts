@@ -27,9 +27,10 @@ export class Trip extends StatefulActor {
   }
   /** Clear this trip's state. Used to clean up simulated passengers after a surge run: a few
    *  hundred idle Trip instances evicted at once crashed the actor host once (DEBUGLOG #14). */
-  async reset(): Promise<void> {
+  async reset(): Promise<{ ok: true }> {
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
+    return { ok: true };
   }
   async get() {
     return this.load();

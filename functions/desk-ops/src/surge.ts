@@ -30,7 +30,7 @@ export class Surge extends StatefulActor {
   async start(codes: string[], seconds: number, waitlistFlight: string): Promise<SurgeState> {
     const s: SurgeState = {
       running: true, total: codes.length, started: 0, done: 0, rebooked: 0, waitlisted: 0, raceLost: 0, errors: 0,
-      startedAt: Date.now(), perWave: Math.max(1, Math.ceil(codes.length / Math.max(1, seconds))), waitlistFlight, queue: codes, codes, ms: [],
+      startedAt: Date.now(), perWave: Math.max(1, Math.ceil(codes.length / Math.max(1, seconds))), waitlistFlight, queue: [...codes], codes, ms: [],
     };
     await this.ctx.storage.put("s", s);
     await this.ctx.storage.setAlarm(Date.now() + 200);

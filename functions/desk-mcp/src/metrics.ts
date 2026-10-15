@@ -59,7 +59,8 @@ export class Metrics extends StatefulActor {
     return { minutes, counts, latency, errorsLastMinute, calls: (await this.ctx.storage.get<CallRow[]>("calls")) ?? [], callbacks };
   }
 
-  async reset(): Promise<void> {
+  async reset(): Promise<{ ok: true }> {
     await this.ctx.storage.deleteAll();
+    return { ok: true };
   }
 }

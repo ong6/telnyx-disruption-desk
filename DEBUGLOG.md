@@ -478,3 +478,21 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
   on another caller's booking.
 - **Status: open.** Next: log which rung of the identity ladder each request matched, run two
   conversations at once, and fail closed (ask to verify again) whenever the rungs disagree.
+
+## 26. Actor methods that return nothing fail over RPC; the surge and both resets broke
+
+- **Symptom.** POST /api/surge returned 500 `CodecError: cannot encode circular reference at
+  .codes`. POST /api/metrics/reset returned 500 "Value is not JSON serializable". The surge's
+  cleanup logged `cleared: 0`.
+- **Evidence.** Found by an end-to-end demo test on 2026-10-15: POST /api/surge created 200
+  synthetic bookings and Trip actors before failing at Surge.start; Metrics.reset deleted its
+  data but returned 500 anyway.
+- **Cause.** The runtime's codec rejects a value referenced twice (the state stored the same
+  array as both `queue` and `codes`), and an RPC whose method resolves to undefined (both reset
+  methods returned `Promise<void>`). Trip.reset's rejection was hidden by Promise.allSettled in
+  surge.ts cleanup, so `cleared` was always 0 and simulated passengers were never cleaned up —
+  the #14 prevention never ran.
+- **Fix.** Surge.start stores `queue: [...codes]`; Metrics.reset and Trip.reset return
+  `{ ok: true }`. Actor RPC methods always return a JSON value.
+- **Takeaway.** A cleanup behind Promise.allSettled can fail silently for days: count failures,
+  not only successes.
