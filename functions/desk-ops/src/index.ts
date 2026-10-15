@@ -58,11 +58,12 @@ export default {
       const body: any = req.method === "POST" ? await req.json().catch(() => ({})) : {};
       if (path === "/api/scenario" && req.method === "POST") return json(await loadScenario(env, body.id ?? "normal", log));
       if (path === "/api/flags" && req.method === "POST") {
-        const allowed: (keyof Flags)[] = ["disruption_mode", "human_queue", "hold_ttl_secs", "web_calls_as_demo_caller"];
+        const allowed: (keyof Flags)[] = ["disruption_mode", "human_queue", "hold_ttl_secs", "web_calls_as_demo_caller", "handoff", "fault"];
         const patch = Object.fromEntries(Object.entries(body).filter(([k]) => allowed.includes(k as keyof Flags)));
         const flags = await writeFlags(env, patch);
         log.info("flags", { patch });
-        if ("disruption_mode" in patch || "human_queue" in patch) await syncAssistantDefaults(env, log);
+        if ("disruption_mode" in patch || "human_queue" in patch || "handoff" in patch) await syncAssistantDefaults(env, log);
+        if ("fault" in patch) await env.CANARY.idFromName("main").probeSoon();
         return json(flags);
       }
       if (path === "/api/relief" && req.method === "POST") {
@@ -136,7 +137,7 @@ export default {
 async function syncAssistantDefaults(env: any, log: ReturnType<typeof makeLogger>) {
   const { flags, scenario } = await readConfig(env, true);
   const ids: string[] = JSON.parse((await env.KV.get("config/assistants")) ?? "[]");
-  const patch = { disruption_mode: flags.disruption_mode, human_queue: flags.human_queue, incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "" };
+  const patch = { disruption_mode: flags.disruption_mode, human_queue: flags.human_queue, handoff: flags.handoff, incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "" };
   const headers = { authorization: `Bearer ${process.env.DESK_TELNYX_KEY}`, "content-type": "application/json" };
   await Promise.all(ids.map(async (id) => {
     const curRes = await fetch(`https://api.telnyx.com/v2/ai/assistants/${id}`, { headers });

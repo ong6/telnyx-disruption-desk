@@ -5,6 +5,7 @@ export { Flight } from "./flight";
 export { Trip } from "./trip";
 export { Metrics } from "./metrics";
 export { CallSession } from "./call";
+import { readConfigFast } from "../../../shared/config";
 import { makeLogger } from "../../../shared/log";
 import type { CallClaims } from "../../../shared/types";
 import type { CallBinding } from "./call";
@@ -101,6 +102,11 @@ export default {
         if (!tool) return rpcError(msg.id, -32602, `unknown tool ${name}`);
         const t0 = Date.now();
         try {
+          // The console's fault switch makes the desk unhealthy on purpose: every tool throws into
+          // the backend_error path below (span outcome "error", the model is told to apologise and
+          // offer a callback or a person). request_callback is exempt so the degraded path still
+          // has a way out.
+          if ((await readConfigFast(env, 300))?.flags.fault === "mcp_down" && name !== "request_callback") throw new Error("fault injected: mcp_down");
           const out = await tool.run({ env, claims, log }, msg.params?.arguments ?? {});
           const outcome = (out as any).held === false || (out as any).confirmed === false || (out as any).verified === false ? "declined" : "ok";
           // Booking codes and last names are the two factors verify_booking asks for: they are

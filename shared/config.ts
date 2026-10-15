@@ -8,6 +8,9 @@ export interface Flags {
   hold_ttl_secs: number;
   /** Web/chat calls carry no phone number; treat them as the demo caller so testers see the identified path. */
   web_calls_as_demo_caller: "on" | "off";
+  /** On a demo line a transfer would ring a real number mid-demo; end_call says the handoff line and hangs up. */
+  handoff: "transfer" | "end_call";
+  fault: "off" | "mcp_down";
 }
 export interface Scenario {
   id: string; // "normal" | "typhoon"
@@ -17,7 +20,7 @@ export interface Scenario {
   loadedAt: number;
 }
 
-const DEFAULTS: Flags = { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "off" };
+const DEFAULTS: Flags = { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "off", handoff: "transfer", fault: "off" };
 let cache: { at: number; flags: Flags; scenario: Scenario | null } | null = null;
 
 export async function readConfig(env: any, force = false): Promise<{ flags: Flags; scenario: Scenario | null }> {

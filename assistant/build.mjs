@@ -66,7 +66,7 @@ const MANDARIN_INSTRUCTIONS = `LANGUAGE RULE: Always reply in Simplified Chinese
 const DEFAULT_VARS = {
   trace_id: "", caller_known: "false", first_name: "", booking_code: "", pax_count: "", flight_spoken: "", flight_status: "",
   disruption_mode: "off", incident_notice: "", flight_disrupted: "false", tier: "none", special_assistance: "false",
-  human_queue: "open", case_status: "none", has_active_hold: "false", hold_minutes_left: "", hold_flight: "",
+  human_queue: "open", handoff: "transfer", case_status: "none", has_active_hold: "false", hold_minutes_left: "", hold_flight: "",
   rebooked_confirmation: "", callback_reason: "", calls_count: "0",
   opening_offer: "I can rebook or cancel your flight, or connect you with a person. How can I help?", // desk-dv OFFER_ANYONE
 };
@@ -97,6 +97,7 @@ async function main() {
     Object.assign(DEFAULT_VARS, {
       disruption_mode: flags.disruption_mode ?? "off",
       human_queue: flags.human_queue ?? "open",
+      handoff: flags.handoff ?? "transfer",
       incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "",
     });
   } else {

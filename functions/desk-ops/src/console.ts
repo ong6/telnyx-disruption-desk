@@ -45,7 +45,7 @@ button.busy,a.busy{opacity:.55;pointer-events:none}
 #busy{display:none}
 @media (max-width:900px){.board,.side{grid-column:span 12}main{padding:12px}header{padding:12px}}
 </style></head><body>
-<header><h1>Nimbus Air · Disruption Desk</h1><span id="mode" class="pill">—</span><span id="queue" class="pill">—</span><span id="health" class="pill">canary —</span><span id="busy" class="pill warn">working…</span><span id="state" class="pill" title="How long the console took to read its own state, and which subsystems failed to answer">console —</span><span id="scn" class="mut"></span></header>
+<header><h1>Nimbus Air · Disruption Desk</h1><span id="mode" class="pill">—</span><span id="queue" class="pill">—</span><span id="handoff" class="pill">—</span><span id="fault" class="pill" style="display:none"></span><span id="health" class="pill">canary —</span><span id="busy" class="pill warn">working…</span><span id="state" class="pill" title="How long the console took to read its own state, and which subsystems failed to answer">console —</span><span id="scn" class="mut"></span></header>
 <main>
 <section class="wide" style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between">
 <div><h2 style="margin:0 0 6px">Talk to the desk</h2><div class="mut">Call from this browser (allow the microphone). Phone: +1 743 888 2787 (trial account: only the verified number can dial in).
@@ -61,7 +61,7 @@ button.busy,a.busy{opacity:.55;pointer-events:none}
 <div id="lock" class="help"></div>
 <details class="op" style="margin-top:10px"><summary class="help" style="cursor:pointer">More controls</summary>
 <div class="help"><b>Human queue full</b>: callers asking for a person get a callback offer instead of a transfer. <b>Relief flight</b>: ops adds a 300-seat NB870 tomorrow. <b>Hold length</b>: how long a held seat waits for a yes (45 s shows expiry live). <b>Web calls as Jun</b>: browser calls are recognised as the demo passenger. <b>free 1</b> on the board frees a seat so a waitlisted passenger gets a callback.</div>
-<div class="controls"><button onclick="flag('human_queue',this)">Toggle human queue</button><button onclick="act('/api/relief',{},this)">+ Relief flight NB870</button>
+<div class="controls"><button onclick="flag('human_queue',this)">Toggle human queue</button><button onclick="flag('handoff',this)">Toggle handoff (transfer / end call)</button><button onclick="flag('fault',this)">Break MCP (fault)</button><button onclick="act('/api/relief',{},this)">+ Relief flight NB870</button>
 <select id="ttl" onchange="act('/api/flags',{hold_ttl_secs:Number(this.value)},this)"><option value="600">hold 10 min</option><option value="120">hold 2 min</option><option value="45">hold 45 s</option></select>
 <button onclick="flag('web_calls_as_demo_caller',this)">Toggle web calls as Jun</button><button onclick="act('/api/metrics/reset',{},this)">Reset counters</button></div>
 </details>
@@ -107,12 +107,14 @@ async function influx(el){
   await act('/api/surge',{callers:200,seconds:30});
   el.disabled=false;el.classList.remove('busy');el.textContent=keep;delete el.dataset.label;
 }
-function flag(name,el){const cur=S&&S.flags?S.flags[name]:undefined;const next=name==='human_queue'?(cur==='full'?'open':'full'):(cur==='on'?'off':'on');act('/api/flags',{[name]:next},el,'Flipping '+name+'…')}
+function flag(name,el){const cur=S&&S.flags?S.flags[name]:undefined;const next=name==='human_queue'?(cur==='full'?'open':'full'):name==='handoff'?(cur==='end_call'?'transfer':'end_call'):name==='fault'?(cur==='mcp_down'?'off':'mcp_down'):(cur==='on'?'off':'on');act('/api/flags',{[name]:next},el,'Flipping '+name+'…')}
 function sum(c,pred){return Object.entries(c).filter(([k])=>pred(k)).reduce((n,[,v])=>n+v,0)}
 function render(s){S=s;const f=s.flags;
 const st=s.stateMs||0;$('state').textContent='console '+Math.round(st/100)/10+' s'+(s.degraded?' · degraded: '+s.degraded.join(', '):'');$('state').className='pill '+(s.degraded?'on':(st>4000?'warn':''));
 $('mode').textContent='disruption '+f.disruption_mode;$('mode').className='pill '+(f.disruption_mode==='on'?'on':'');
 $('queue').textContent='human queue '+f.human_queue;$('queue').className='pill '+(f.human_queue==='full'?'warn':'');
+$('handoff').textContent='handoff '+f.handoff;$('handoff').className='pill '+(f.handoff==='end_call'?'warn':'');
+const brk=f.fault&&f.fault!=='off';$('fault').style.display=brk?'':'none';if(brk){$('fault').textContent='FAULT '+f.fault;$('fault').className='pill on'}
 $('scn').textContent=(s.scenario?('scenario: '+s.scenario.id+' · base '+s.scenario.baseDate+' · hold '+f.hold_ttl_secs+'s'):'no scenario loaded')+' · web calls as demo caller: '+f.web_calls_as_demo_caller;
 const runs=(s.canary&&s.canary.runs)||[];const last=runs[0];const fresh=last&&Date.now()-last.at<90000;const good=last&&last.dv.ok&&last.mcpList.ok&&last.mcpTool.ok;
 $('health').textContent=!s.canary.running?'canary off':(fresh&&good?'healthy · '+ago(last.at):'UNHEALTHY');$('health').className='pill '+(!s.canary.running?'':(fresh&&good?'ok':'on'));

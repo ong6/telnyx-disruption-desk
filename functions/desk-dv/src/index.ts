@@ -74,7 +74,7 @@ export default {
       // Flags come from memory; on a cold process we don't wait for KV past the budget and leave
       // the flag variables out, so the assistant's own defaults (kept in sync by desk-ops) apply.
       const cfg = await readConfigFast(env, 500);
-      const flags = cfg?.flags ?? { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "off" as const };
+      const flags = cfg?.flags ?? { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "off" as const, handoff: "transfer", fault: "off" };
       const scenario = cfg?.scenario ?? null;
       let caller: string = p.telnyx_end_user_target ?? "";
       // A browser (widget) call has no phone number, only a SIP identity, even though its channel
@@ -103,7 +103,7 @@ export default {
       const offerFresh = !!(t?.offer && t.offer.expiresAt > Date.now() && t.callback?.placedAt);
 
       const flagVars: Record<string, string> = cfg
-        ? { disruption_mode: flags.disruption_mode, incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "", human_queue: flags.human_queue }
+        ? { disruption_mode: flags.disruption_mode, incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "", human_queue: flags.human_queue, handoff: flags.handoff }
         : {};
       const vars: Record<string, string> = {
         trace_id: trace,

@@ -25,6 +25,23 @@ test("edges connect real nodes, and speak and tool nodes have exactly one defaul
   assert.ok(flow.edges.filter((e: any) => e.condition.type === "default").every((e: any) => flow.nodes.find((n: any) => n.id === e.start_node_id).type !== "prompt"));
 });
 
+test("the handoff flag routes handoffs to a person or to the demo end-call", () => {
+  // A demo line can't ring a real agent: end_call takes every handoff to n_demo_end, which plays
+  // the handoff line and hangs up. An unset handoff variable matches neither side and the gate's
+  // default edge offers a callback instead.
+  const handoff = (e: any) => e.condition.expression?.operands?.find((o: any) => o.left?.name === "handoff")?.right?.value;
+  const gate = flow.edges.filter((e: any) => e.start_node_id === "n_handoff_gate");
+  const demoEnd = gate.filter((e: any) => e.target.node_id === "n_demo_end");
+  const human = gate.filter((e: any) => e.target.node_id === "n_human");
+  assert.equal(demoEnd.length, 2); // string status on calls, number in chat
+  assert.equal(human.length, 2);
+  for (const e of demoEnd) assert.equal(handoff(e), "end_call", e.id);
+  for (const e of human) assert.equal(handoff(e), "transfer", e.id);
+  const specialist = flow.edges.filter((e: any) => e.start_node_id === "n_triage" && ["n_specialist", "n_demo_end"].includes(e.target.node_id));
+  assert.equal(specialist.length, 2);
+  for (const e of specialist) assert.equal(handoff(e), e.target.node_id === "n_demo_end" ? "end_call" : "transfer", e.id);
+});
+
 test("rebooking asks for the date before the time, and every prompt node is scoped", () => {
   const rebook = flow.nodes.find((n: any) => n.id === "n_rebook").instructions as string;
   assert.ok(rebook.indexOf("find_dates") < rebook.indexOf("find_flights"));

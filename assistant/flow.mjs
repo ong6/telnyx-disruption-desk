@@ -86,6 +86,7 @@ export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinA
     tool("n_handoff_gate", "Human handoff gate", queueToolId, "One moment, let me get a colleague for you."),
     tool("n_human", "Transfer to agent", transferToolId, "I'm connecting you with a member of our team now, and I'll pass on what we've discussed."),
     tool("n_specialist", "Special assistance transfer", transferToolId, "I can see your booking includes special assistance, so I'm connecting you with a specialist who can arrange everything for you."),
+    tool("n_demo_end", "Demo handoff: end call", hangupToolId, "I'd now connect you with a member of our team. This is a demo line, so the call ends here instead. Thanks for calling Nimbus Air."),
     prompt("n_callback", "Callback offer", [
       "Our team can't take a transfer right now. Apologise briefly and offer a callback from a person within two hours.",
       "If they accept, call request_callback with a one-line reason for the agent (set transfer_failed to true if a transfer was just attempted). Then confirm it's booked and call the wrap-up transition.",
@@ -117,7 +118,8 @@ export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinA
   edge("n_open", "n_triage", DEFAULT);
 
   // Hard rules first: these run before the model's turn.
-  edge("n_triage", "n_specialist", expr(and(cmp("==", v("special_assistance"), s("true")), cmp("==", v("human_queue"), s("open")))));
+  edge("n_triage", "n_specialist", expr(and(cmp("==", v("special_assistance"), s("true")), cmp("==", v("human_queue"), s("open")), cmp("==", v("handoff"), s("transfer")))));
+  edge("n_triage", "n_demo_end", expr(and(cmp("==", v("special_assistance"), s("true")), cmp("==", v("human_queue"), s("open")), cmp("==", v("handoff"), s("end_call")))), "_specialist");
   // Caller intent.
   edge("n_triage", "n_rebook", llm("The caller wants to rebook, change or move their flight, or wants to confirm a seat that is held for them."));
   edge("n_triage", "n_cancel", llm("The caller wants to cancel their flight, get a refund, or no longer wants to travel."));
@@ -150,11 +152,17 @@ export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinA
   }
   // The gate decides deterministically on the queue check's status code: "200" on calls, 200 in
   // chat. One edge per form: as a single `or`, a call that got 200 went to the callback (DEBUGLOG #24).
-  edge("n_handoff_gate", "n_human", expr(cmp("==", v("telnyx_last_tool_status_code"), s("200"))));
-  edge("n_handoff_gate", "n_human", expr(cmp("==", v("telnyx_last_tool_status_code"), n(200))), "_chat");
+  // The handoff flag splits each pair: transfer rings a person, end_call plays the demo handoff
+  // line and hangs up. An unset handoff variable matches neither and falls to the callback, which
+  // is the safe side.
+  edge("n_handoff_gate", "n_human", expr(and(cmp("==", v("telnyx_last_tool_status_code"), s("200")), cmp("==", v("handoff"), s("transfer")))));
+  edge("n_handoff_gate", "n_human", expr(and(cmp("==", v("telnyx_last_tool_status_code"), n(200)), cmp("==", v("handoff"), s("transfer")))), "_chat");
+  edge("n_handoff_gate", "n_demo_end", expr(and(cmp("==", v("telnyx_last_tool_status_code"), s("200")), cmp("==", v("handoff"), s("end_call")))));
+  edge("n_handoff_gate", "n_demo_end", expr(and(cmp("==", v("telnyx_last_tool_status_code"), n(200)), cmp("==", v("handoff"), s("end_call")))), "_chat");
   edge("n_handoff_gate", "n_callback", DEFAULT);
   edge("n_human", "n_callback", DEFAULT); // only used if the transfer fails
   edge("n_specialist", "n_callback", DEFAULT);
+  edge("n_demo_end", "n_callback", DEFAULT); // only used if the hangup fails
 
   return { flow: { start_node_id: "n_open", nodes, edges }, scope, hangupToolId };
 }

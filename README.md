@@ -94,7 +94,7 @@ The alarm frees the seat promptly and offers it to the waitlist.
 
 ## The conversation workflow
 
-14 nodes and 41 edges (27 LLM, 9 expression, 5 default), built as data in
+15 nodes and 45 edges (27 LLM, 12 expression, 6 default), built as data in
 [`assistant/flow.mjs`](assistant/flow.mjs) and applied with
 [`assistant/build.mjs`](assistant/build.mjs).
 
@@ -215,7 +215,7 @@ which points at chat sessions sharing MCP identity across parallel tests; it is 
 
 | Requirement | Where |
 |---|---|
-| Assistant with a multi-node Conversation Workflow, speak nodes, conditional edges | [`assistant/flow.mjs`](assistant/flow.mjs): 14 nodes (prompt, speak, tool) and 41 edges (expression, LLM and default) |
+| Assistant with a multi-node Conversation Workflow, speak nodes, conditional edges | [`assistant/flow.mjs`](assistant/flow.mjs): 15 nodes (prompt, speak, tool) and 45 edges (expression, LLM and default) |
 | Callable by phone | +1 743 888 2787 (TeXML app assigned by `build.mjs`) |
 | Custom MCP server, at least 3 tools | `desk-mcp`: 11 tools (`verify_booking`, `get_trip_status`, `find_dates`, `find_flights`, `hold_seats`, `confirm_rebooking`, `request_refund`, `cancel_booking`, `join_waitlist`, `request_callback`, `get_policy`) |
 | Dynamic webhook variables from an Edge Function, influencing routing | `desk-dv`: caller ID → booking, case and flags; drives `disruption_mode`, `special_assistance` and `human_queue` edges, and words the opening (`opening_offer`) |

@@ -32,6 +32,13 @@ export class Canary extends StatefulActor {
     await this.ctx.storage.deleteAlarm();
     return { running: false };
   }
+  // Flags are cached for 10 s per process, so probing 12 s after a flip shows the new state
+  // instead of waiting up to a minute for the next scheduled probe.
+  async probeSoon(ms = 12_000) {
+    if (!(await this.ctx.storage.get("running"))) return { running: false };
+    await this.ctx.storage.setAlarm(Date.now() + ms);
+    return { running: true };
+  }
   async runs(): Promise<{ running: boolean; runs: CanaryRun[] }> {
     return { running: !!(await this.ctx.storage.get("running")), runs: (await this.ctx.storage.get<CanaryRun[]>("runs")) ?? [] };
   }
