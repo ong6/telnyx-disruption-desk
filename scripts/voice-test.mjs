@@ -7,9 +7,10 @@
 // hung. Results go to docs/evidence/voice-<time>.md.
 //
 // No scenario ever reaches a transfer: transfers dial HUMAN_DESK_NUMBER, a real phone. The person
-// scenario runs with the human queue full (callback path), and the script hangs every call up
-// through Call Control once the scenario is done. (The caller can't hang up itself: with a shared
-// hangup tool attached, the caller assistant never took a turn on a call.)
+// scenario runs with the human queue full (callback path), and person_demo is safe because handoff
+// end_call hangs the desk up instead of dialling. The script hangs every call up through Call
+// Control once the scenario is done. (The caller can't hang up itself: with a shared hangup tool
+// attached, the caller assistant never took a turn on a call.)
 // Usage: source scripts/env.sh && node scripts/voice-test.mjs [--no-reset] [scenario ...]
 import { writeFileSync } from "node:fs";
 
@@ -75,6 +76,15 @@ const SCENARIOS = {
     persona: `${PLAY} You are frustrated. In your first reply say: I want to speak to a real person. If you're offered a callback, accept it. ${END}`,
     checks: {
       "callback offered and booked": ({ tools, desk }) => tools.includes("request_callback") && said(desk, /call(ing)? you back|callback/i),
+    },
+  },
+  person_demo: {
+    // With handoff end_call, a request for a person passes the queue check and the desk says the
+    // demo handoff line and hangs up, so nothing dials out even with the queue open.
+    flags: { human_queue: "open", handoff: "end_call" },
+    persona: `${PLAY} You are frustrated. In your first reply say: I want to speak to a real person. ${END}`,
+    checks: {
+      "demo handoff line, no transfer": ({ desk, tools }) => said(desk, /demo line/i) && !tools.includes("request_callback"),
     },
   },
   mandarin: {
