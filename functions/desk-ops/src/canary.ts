@@ -32,10 +32,12 @@ export class Canary extends StatefulActor {
     await this.ctx.storage.deleteAlarm();
     return { running: false };
   }
-  // Flags are cached for 10 s per process, so probing 12 s after a flip shows the new state
-  // instead of waiting up to a minute for the next scheduled probe.
+  // desk-mcp serves its last cached flags and refreshes in the background: the first probe
+  // after a flip warms the flag cache, and only the next probes see the new state. So probe
+  // 12 s after the flip to warm the cache, then repeat every 10 s a few times (quick).
   async probeSoon(ms = 12_000) {
     if (!(await this.ctx.storage.get("running"))) return { running: false };
+    await this.ctx.storage.put("quick", 3);
     await this.ctx.storage.setAlarm(Date.now() + ms);
     return { running: true };
   }
@@ -60,6 +62,9 @@ export class Canary extends StatefulActor {
     const runs = [run, ...((await this.ctx.storage.get<CanaryRun[]>("runs")) ?? [])].slice(0, 30);
     await this.ctx.storage.put("runs", runs);
     console.log(JSON.stringify({ ts: new Date().toISOString(), svc: "canary", ev: "probe", ok: dv.ok && mcpList.ok && mcpTool.ok, dv: dv.ms, mcpList: mcpList.ms, mcpTool: mcpTool.ms, detail: [dv, mcpList, mcpTool].find((p) => !p.ok)?.detail }));
-    await this.ctx.storage.setAlarm(Date.now() + EVERY_MS);
+    const quick = (await this.ctx.storage.get<number>("quick")) ?? 0;
+    if (quick > 1) await this.ctx.storage.put("quick", quick - 1);
+    else if (quick === 1) await this.ctx.storage.delete("quick");
+    await this.ctx.storage.setAlarm(Date.now() + (quick > 0 ? 10_000 : EVERY_MS));
   }
 }
