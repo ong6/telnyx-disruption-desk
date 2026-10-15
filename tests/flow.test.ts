@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 // @ts-expect-error: plain ES module without types
 import { buildFlow, EDGE_ID } from "../assistant/flow.mjs";
 
-const { flow, scope } = buildFlow({ transferToolId: "t", hangupToolId: "h", queueToolId: "q", mandarinAssistantId: "assistant-7b3cda63-812a-47b3-8509-1dc9db898dcd" });
+const { flow, scope, hangupToolId } = buildFlow({ transferToolId: "t", hangupToolId: "h", queueToolId: "q", mandarinAssistantId: "assistant-7b3cda63-812a-47b3-8509-1dc9db898dcd" });
 const nodeIds = new Set(flow.nodes.map((n: any) => n.id));
 
 test("every edge id is a valid transition tool name on calls", () => {

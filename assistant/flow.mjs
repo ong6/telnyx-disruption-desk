@@ -86,6 +86,7 @@ export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinA
     tool("n_handoff_gate", "Human handoff gate", queueToolId, "One moment, let me get a colleague for you."),
     tool("n_human", "Transfer to agent", transferToolId, "I'm connecting you with a member of our team now, and I'll pass on what we've discussed."),
     tool("n_specialist", "Special assistance transfer", transferToolId, "I can see your booking includes special assistance, so I'm connecting you with a specialist who can arrange everything for you."),
+    // A hangup tool node is terminal (the call ends), so the API rejects outgoing edges on it.
     tool("n_demo_end", "Demo handoff: end call", hangupToolId, "I'd now connect you with a member of our team. This is a demo line, so the call ends here instead. Thanks for calling Nimbus Air."),
     prompt("n_callback", "Callback offer", [
       "Our team can't take a transfer right now. Apologise briefly and offer a callback from a person within two hours.",
@@ -162,7 +163,6 @@ export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinA
   edge("n_handoff_gate", "n_callback", DEFAULT);
   edge("n_human", "n_callback", DEFAULT); // only used if the transfer fails
   edge("n_specialist", "n_callback", DEFAULT);
-  edge("n_demo_end", "n_callback", DEFAULT); // only used if the hangup fails
 
   return { flow: { start_node_id: "n_open", nodes, edges }, scope, hangupToolId };
 }
