@@ -538,3 +538,13 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
     outage costs the trace viewer and nothing else. The fault switch is an ordinary flag again.
 - **Takeaway.** Two dependencies that "never" fail failed on the same day. Identity now has a
   path that doesn't depend on Telnyx's trace propagation, and config shares a store with seats.
+
+## 28. Three wrong booking codes never reached a person in a test chat
+
+- **Evidence.** Test run Oct 16, 14:08 UTC (conversation 51cfa75a): three wrong codes, and every
+  `verify_booking` answered `attempts_left: 2`. Each turn landed on a fresh per-turn session, so
+  the server's counter never passed one (the identity weakness in #25 and #27). The lockout
+  still held, since no wrong code verified, but the hand-off to a person never came. The run
+  before passed by luck.
+- **Fix.** The prompt has the assistant count failed tries in the conversation itself and hand
+  over after the third, whatever `attempts_left` says. The server counter stays as the backstop.

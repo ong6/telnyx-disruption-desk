@@ -36,7 +36,7 @@ const tool = (id, name, shared_tool_id, message) => ({ id, name, type: "tool", s
 /** Telnyx prefixes "transition__" (12 characters) and tool names allow [A-Za-z0-9_-]{1,64}. */
 export const EDGE_ID = /^[a-z0-9_]{1,52}$/;
 
-const VERIFY = "If caller_known is false and the caller isn't verified yet, ask for the 6-character booking code and their last name, and call verify_booking once you have both. Once you have them, also pass booking_code and last_name to every booking tool you call. If it fails, read back the code and the name you used, ask which one is wrong, and ask them to spell the name. After the third failed try, or when attempts_left is 0, tell them you're connecting them with a colleague and call the transition to a person.";
+const VERIFY = "If caller_known is false and the caller isn't verified yet, ask for the 6-character booking code and their last name, and call verify_booking once you have both. Once you have them, also pass booking_code and last_name to every booking tool you call. If it fails, read back the code and the name you used, ask which one is wrong, and ask them to spell the name. Count the failed tries in this conversation yourself: after the third, or when attempts_left is 0, whichever comes first, stop asking, tell them you're connecting them with a colleague, and call the transition to a person in that same turn.";
 
 export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinAssistantId }) {
   const nodes = [
