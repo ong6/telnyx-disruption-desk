@@ -31,6 +31,7 @@ function harness(flags: Record<string, string> = {}) {
   globalThis.fetch = (async (url: string) => {
     const path = new URL(url).pathname;
     if (path === `/v1/bookings/${BOOKING.code}`) return new Response(JSON.stringify(BOOKING));
+    if (path === "/v1/bookings/R2D5VK") return new Response(JSON.stringify({ ...BOOKING, code: "R2D5VK", first_name: "Priya", last_name: "Raman", pax: 2 }));
     if (path.startsWith("/v1/flights/")) return new Response(JSON.stringify(FLIGHT));
     if (path === `/v1/bookings/${BOOKING.code}/cancel`) return new Response(JSON.stringify({ credit_ref: "CR7K2PQ" }));
     return new Response("{}", { status: 404 });
@@ -87,4 +88,17 @@ test("cancelling an operating flight refunds the sample 100 Singapore dollars", 
   assert.equal(out.refund_sgd, 100);
   assert.match(out.say, /refund 100 Singapore dollars/);
   assert.doesNotMatch(out.say, /credit/);
+});
+
+test("a booking code and last name win over a turn linked to another caller's booking", async () => {
+  const h = harness();
+  // This turn's link points at Priya Raman's booking (a parallel conversation: DEBUGLOG #25).
+  await TOOLS.verify_booking.run(h.ctx("shared-turn"), { booking_code: "R2D5VK", last_name: "Raman" });
+  const args = { booking_code: "K7Q2ZX", last_name: "Ong" };
+  const out: any = await TOOLS.get_trip_status.run(h.ctx("shared-turn", args), args);
+  assert.equal(out.booking_code, "K7Q2ZX");
+  assert.equal(h.sessions.get("shared-turn").booking, "K7Q2ZX");
+  // And a wrong name never falls back to the linked booking.
+  const bad = { booking_code: "K7Q2ZX", last_name: "Raman" };
+  await assert.rejects(TOOLS.get_trip_status.run(h.ctx("shared-turn", bad), bad), (e: any) => e.code === "not_verified");
 });

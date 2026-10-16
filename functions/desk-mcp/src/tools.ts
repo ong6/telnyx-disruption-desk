@@ -35,17 +35,19 @@ async function sessionBooking(ctx: ToolCtx): Promise<string> {
 }
 
 /**
- * The booking this call may act on. If the call isn't linked to one (the link between turns was
- * lost: DEBUGLOG #27), a booking tool that carries the booking code and last name verifies them
- * here, with the same attempt counter and lockout as verify_booking, and links the call.
+ * The booking this call may act on. A booking tool that carries the booking code and last name
+ * acts on that booking once they check out (same attempt counter and lockout as verify_booking),
+ * and links the turn to it. They win over the turn's link: a link can be lost between turns, or
+ * point at another conversation's booking (a parallel chat once confirmed R2D5VK for a caller
+ * who had verified K7Q2ZX: DEBUGLOG #25, #27). Without them, the link decides.
  */
 async function requireBooking(ctx: ToolCtx): Promise<PssBooking> {
-  let code = await sessionBooking(ctx);
-  if (!code && ctx.args?.booking_code && ctx.args?.last_name) {
+  if (ctx.args?.booking_code && ctx.args?.last_name) {
     const r = await checkPair(ctx, ctx.args.booking_code, ctx.args.last_name);
     if (!("b" in r)) throw new ToolError("not_verified", `The booking code and last name didn't match (${JSON.stringify(r)}). Read them back to the caller and ask which is wrong.`);
     return r.b;
   }
+  const code = await sessionBooking(ctx);
   if (!code)
     throw new ToolError("not_verified", "This call isn't linked to a booking yet. Call this tool again with the caller's booking_code and last_name. If you don't have them, ask for them. This is not a system fault: don't say the system is down.");
   const b = await pss(ctx.env, ctx.claims.trace, ctx.log).booking(code);

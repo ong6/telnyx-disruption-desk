@@ -54,7 +54,7 @@ const TESTS = [
   },
   {
     name: "Normal change costs 100 dollars",
-    instructions: "You are Daniel Hughes, booking code H8N6CU, last name Hughes. Your flight from Singapore to Tokyo is operating normally but you want to fly on a different day. When asked which day, choose the first day offered that isn't today; when offered times, choose the latest one offered. Accept the change fee and say yes clearly when asked to confirm.",
+    instructions: "You are Daniel Hughes, booking code H8N6CU, last name Hughes. Your flight from Singapore to Tokyo is operating normally but you want to fly on a different day. You want the assistant to make the change, not a person: don't ask to speak to anyone. When asked which day, choose the first day offered that isn't today; when offered times, choose the latest one offered. Accept the change fee and say yes clearly when asked to confirm.",
     rubric: [
       DATE_THEN_TIME,
       { name: "Fee quoted", criteria: "States a change fee of 100 Singapore dollars before asking the caller to confirm, and repeats it in the read-back or the confirmation." },

@@ -478,6 +478,16 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
   on another caller's booking.
 - **Status: open.** Next: log which rung of the identity ladder each request matched, run two
   conversations at once, and fail closed (ask to verify again) whenever the rungs disagree.
+- **Seen again, worse (Oct 16, 13:39 UTC, conversation 2108179d).** A test caller verified
+  K7Q2ZX and held a seat; the confirm landed on a turn linked to the parallel refund test's
+  R2D5VK, so the desk re-held and confirmed Priya Raman's two-passenger booking and read her code
+  to Jun. The model had passed K7Q2ZX and Ong with every call (#27), but they were used only when
+  the turn had no link at all.
+- **Fix.** A booking code and last name on a tool call now win over the turn's link: checked
+  against the reservation system, counted toward the lockout when wrong, and the turn re-linked
+  to them. Without them the link still decides, so a caller recognised by caller ID is unchanged.
+  Unit test: a turn linked to R2D5VK acts on K7Q2ZX when given K7Q2ZX and Ong, and a wrong name
+  never falls back to the link.
 
 ## 26. Actor methods that return nothing fail over RPC; the surge and both resets broke
 
