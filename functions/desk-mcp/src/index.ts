@@ -5,6 +5,8 @@ export { Flight } from "./flight";
 export { Trip } from "./trip";
 export { Metrics } from "./metrics";
 export { CallSession } from "./call";
+export { Config } from "./config";
+import { readConfigFast } from "../../../shared/config";
 import { makeLogger } from "../../../shared/log";
 import type { CallClaims } from "../../../shared/types";
 import type { CallBinding } from "./call";
@@ -15,21 +17,9 @@ const SERVER = { name: "nimbus-disruption-desk", version: "1.0.0" };
 const rpc = (id: unknown, result: unknown) => Response.json({ jsonrpc: "2.0", id, result });
 const rpcError = (id: unknown, code: number, message: string) => Response.json({ jsonrpc: "2.0", id, error: { code, message } });
 
-// The fault switch is actor storage, not KV, so a KV outage cannot hide it. The 3 s cache
-// keeps the actor read off the tools/call hot path; on timeout or error the previous value
-// stands and `at` stays put, so the next call retries.
-let faultCache = { at: 0, value: "off" };
-async function faultState(env: any): Promise<string> {
-  if (Date.now() - faultCache.at < 3_000) return faultCache.value;
-  try {
-    const value = await Promise.race<string>([
-      env.METRICS.idFromName("global").fault(),
-      new Promise<string>((_, reject) => setTimeout(() => reject(new Error("fault read timeout")), 300)),
-    ]);
-    faultCache = { at: Date.now(), value };
-  } catch {}
-  return faultCache.value;
-}
+// The fault switch is a flag in the Config actor; the shared 3 s config cache keeps the read off
+// the tools/call hot path, and a slow read serves the last value this process saw.
+const faultState = async (env: any) => (await readConfigFast(env, 300))?.flags.fault ?? "off";
 
 /**
  * Telnyx authenticates with a static bearer (an integration secret only the assistant holds).
@@ -122,7 +112,7 @@ export default {
           // offer a callback or a person). request_callback is exempt so the degraded path still
           // has a way out.
           if ((await faultState(env)) === "mcp_down" && name !== "request_callback") throw new Error("fault injected: mcp_down");
-          const out = await tool.run({ env, claims, log }, msg.params?.arguments ?? {});
+          const out = await tool.run({ env, claims, log, args: msg.params?.arguments ?? {} }, msg.params?.arguments ?? {});
           const outcome = (out as any).held === false || (out as any).confirmed === false || (out as any).verified === false ? "declined" : "ok";
           // Booking codes and last names are the two factors verify_booking asks for: they are
           // never written to trace spans.

@@ -14,6 +14,8 @@ export interface ToolCtx {
   env: any;
   claims: CallClaims;
   log: ReturnType<typeof import("../../../shared/log").makeLogger>;
+  /** The tool call's arguments: booking tools may carry booking_code and last_name. */
+  args?: Args;
 }
 
 type Args = Record<string, any>;
@@ -32,12 +34,43 @@ async function sessionBooking(ctx: ToolCtx): Promise<string> {
   return s.booking;
 }
 
+/**
+ * The booking this call may act on. If the call isn't linked to one (the link between turns was
+ * lost: DEBUGLOG #27), a booking tool that carries the booking code and last name verifies them
+ * here, with the same attempt counter and lockout as verify_booking, and links the call.
+ */
 async function requireBooking(ctx: ToolCtx): Promise<PssBooking> {
-  const code = await sessionBooking(ctx);
-  if (!code) throw new ToolError("not_verified", "Verify the caller first with verify_booking (booking code and last name).");
+  let code = await sessionBooking(ctx);
+  if (!code && ctx.args?.booking_code && ctx.args?.last_name) {
+    const r = await checkPair(ctx, ctx.args.booking_code, ctx.args.last_name);
+    if (!("b" in r)) throw new ToolError("not_verified", `The booking code and last name didn't match (${JSON.stringify(r)}). Read them back to the caller and ask which is wrong.`);
+    return r.b;
+  }
+  if (!code)
+    throw new ToolError("not_verified", "This call isn't linked to a booking yet. Call this tool again with the caller's booking_code and last_name. If you don't have them, ask for them. This is not a system fault: don't say the system is down.");
   const b = await pss(ctx.env, ctx.claims.trace, ctx.log).booking(code);
   if (!b) throw new ToolError("booking_missing", "The booking could not be found in the reservation system.");
   return b;
+}
+
+/** verify_booking's check: links the call to the booking on a match, counts a failed attempt otherwise. */
+async function checkPair(ctx: ToolCtx, booking_code: unknown, last_name: unknown): Promise<{ b: PssBooking } | { verified: false; reason?: string; attempts_left?: number; next: string }> {
+  const code = String(booking_code ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const name = letters(last_name);
+  // A call made before the caller gave both isn't an attempt.
+  if (!code || !name) return { verified: false, reason: "missing_details", next: "ask the caller for their booking code and last name, then call this again" };
+  const left = await session(ctx).attemptsLeft();
+  if (left <= 0) return { verified: false, attempts_left: 0, next: "transfer the caller to a person" };
+  const b = await pss(ctx.env, ctx.claims.trace, ctx.log).booking(code);
+  if (!b || letters(b.last_name) !== name) {
+    // The call-side MCP client can deliver one tool call several times (DEBUGLOG #22), so
+    // the same code and name count as one attempt.
+    const { left: attemptsLeft, counted } = await session(ctx).fail(`${code}|${name}`);
+    if (b && counted) await trip(ctx, b.code).verifyFailed();
+    return { verified: false, attempts_left: attemptsLeft, next: "read back the code and name you used, ask which is wrong, and try again" };
+  }
+  await session(ctx).bind(b.code);
+  return { b };
 }
 
 export class ToolError extends Error {
@@ -114,22 +147,8 @@ export const TOOLS: Record<string, Tool> = {
       required: ["booking_code", "last_name"],
     },
     async run(ctx, { booking_code, last_name }) {
-      const code = String(booking_code ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-      const name = letters(last_name);
-      // A call made before the caller gave both isn't an attempt.
-      if (!code || !name) return { verified: false, reason: "missing_details", next: "ask the caller for their booking code and last name, then call this again" };
-      const left = await session(ctx).attemptsLeft();
-      if (left <= 0) return { verified: false, attempts_left: 0, next: "transfer the caller to a person" };
-      const b = await pss(ctx.env, ctx.claims.trace, ctx.log).booking(code);
-      if (!b || letters(b.last_name) !== name) {
-        // The call-side MCP client can deliver one tool call several times (DEBUGLOG #22), so
-        // the same code and name count as one attempt.
-        const { left: attemptsLeft, counted } = await session(ctx).fail(`${code}|${name}`);
-        if (b && counted) await trip(ctx, b.code).verifyFailed();
-        return { verified: false, attempts_left: attemptsLeft, next: "read back the code and name you used, ask which is wrong, and try again" };
-      }
-      await session(ctx).bind(b!.code);
-      return { verified: true, ...(await caseSummary(ctx, b!)) };
+      const r = await checkPair(ctx, booking_code, last_name);
+      return "b" in r ? { verified: true, ...(await caseSummary(ctx, r.b)) } : r;
     },
   },
 
@@ -335,16 +354,18 @@ export const TOOLS: Record<string, Tool> = {
       type: "object",
       properties: {
         reason: { type: "string", description: "one line for the agent who calls back" },
+        caller_chose_callback: { type: "boolean", description: "true if the caller asked for a callback, or picked it when offered a callback or a person" },
         transfer_failed: { type: "boolean", description: "true only if a transfer to a person was just tried and failed" },
       },
       required: ["reason"],
     },
-    async run(ctx, { reason, transfer_failed }) {
-      // MCP tools are callable from any node, so the rule lives here: while a person is free,
-      // the caller is transferred, not parked on a callback.
+    async run(ctx, { reason, caller_chose_callback, transfer_failed }) {
+      // MCP tools are callable from any node, so the rule lives here: while a person is free, a
+      // caller who didn't ask for a callback is transferred, not parked. One who chose it gets it
+      // (a "yes, call me back" was once answered with a transfer and a hang-up: DEBUGLOG #27).
       const { flags } = (await readConfigFast(ctx.env, 300)) ?? { flags: { human_queue: "open" } };
-      if (flags.human_queue !== "full" && !transfer_failed)
-        return { booked: false, reason: "agents_available", next: "a person is free: tell the caller you're connecting them now" };
+      if (flags.human_queue !== "full" && !transfer_failed && !caller_chose_callback)
+        return { booked: false, reason: "agents_available", next: "a person is free: in this same turn, say you're connecting them and call the transition to a person" };
       const code = await sessionBooking(ctx);
       if (code) await trip(ctx, code).escalated(String(reason ?? "callback requested"));
       const entry = { at: Date.now(), trace: ctx.claims.trace, booking: code, caller: ctx.claims.caller, reason: String(reason ?? "") };
@@ -367,3 +388,14 @@ export const TOOLS: Record<string, Tool> = {
     },
   },
 };
+
+// Every tool that acts on the booking also takes the booking code and last name, so a call whose
+// link was lost between turns still works without a separate verify step (see requireBooking).
+const IDENTITY = {
+  booking_code: { type: "string", description: "the caller's 6-character booking code, if you have it" },
+  last_name: { type: "string", description: "the caller's last name, if you have it" },
+};
+for (const name of ["get_trip_status", "find_dates", "find_flights", "hold_seats", "confirm_rebooking", "request_refund", "cancel_booking", "join_waitlist"]) {
+  const schema = TOOLS[name].inputSchema as { properties: Record<string, object> };
+  schema.properties = { ...schema.properties, ...IDENTITY };
+}

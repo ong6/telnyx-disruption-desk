@@ -24,6 +24,10 @@ type = "Trip"
 binding = "METRICS"
 type = "Metrics"
 
+[[actors]]
+binding = "CONFIG"
+type = "Config"
+
 # Actor code runs outside the function process, so it reads secrets through the binding,
 # not process.env.
 [[secrets]]

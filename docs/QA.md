@@ -48,11 +48,12 @@ cutover identity lookups can fail — which is why `authenticate()` retries thro
 Evidence: `functions/`, DEBUGLOG #14.
 
 ### 4b. KV
-**The talking point:** "KV is used only where staleness is acceptable: feature flags flipped from
-the console without a redeploy, append-only trace spans, and outbound-call config. And the
-negative result is documented too: we measured a KV read at 1.2–1.7 seconds from a function —
-longer than the reservation call it would cache — so the conversation path never waits on KV."
-Evidence: DEBUGLOG #5, `shared/config.ts`, `shared/log.ts`.
+**The talking point:** "KV now holds only append-only trace spans. Flags and config started in KV,
+but KV failed for hours twice, and the second time it took scenario loads and flag flips down with
+it, so they moved into a Config actor beside the seats. Nothing on a call touches KV. We also
+measured a KV read at 1.2–1.7 seconds from a function — longer than the reservation call it would
+cache."
+Evidence: DEBUGLOG #5, #23, #27, `shared/config.ts`, `shared/log.ts`.
 
 ### 4c. Stateful Actors
 **The talking point:** "`Flight.hold()` is the cleanest answer to 'why an actor': 300 concurrent
@@ -95,7 +96,7 @@ Evidence: README "Try it" + "Limits".
 | Variable comparison edges | Three of them: special-assistance routing, the handoff gate's status code, the 5-minute timer |
 | Actor alarms | `Flight` (hold expiry + waitlist offers), `Trip` (outbound AI callbacks), `Canary` (every minute) |
 | Object storage | Policy documents read by `get_policy`; an itinerary receipt written per rebooking |
-| KV feature flags | Disruption mode, human queue, hold length — flipped on the console, no redeploy |
+| Feature flags (`Config` actor) | Disruption mode, human queue, hold length — flipped on the console, no redeploy |
 | Shared actors | `Flight`/`Trip`/`CallSession`/`Metrics` owned by `desk-mcp`, bound by `desk-dv` and `desk-ops` |
 | Custom routing variables | `special_assistance` and `human_queue` from the webhook drive expression edges |
 | Distributed tracing | One trace id — Telnyx's own `traceparent` — across webhook → KV/actors → MCP → reservation system |
@@ -176,7 +177,7 @@ WebRTC call to the same assistant for everyone else.
 
 - "The model never decides whose booking to act on."
 - "Correctness never depends on an alarm firing."
-- "KV is only for things where being ten seconds stale is fine."
+- "Nothing on a call touches KV: when it went down for hours, only the trace viewer noticed."
 - "Every hop answers in milliseconds; the model is the only seconds-long hop, and we fill it."
 - "The canary is the demo of our own observability — it caught us once, on video."
 - "Chat is not a stand-in for a call: transitions work differently."

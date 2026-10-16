@@ -496,3 +496,35 @@ What broke while building, how it showed up, and the evidence. Newest last. Time
   `{ ok: true }`. Actor RPC methods always return a JSON value.
 - **Takeaway.** A cleanup behind Promise.allSettled can fail silently for days: count failures,
   not only successes.
+
+## 27. A browser call lost its verification between turns, and KV went down for hours again
+
+- **Symptom.** On a browser call (conversation b34f71a4, Oct 16) the caller verified K7Q2ZX,
+  asked to move the flight a day, and heard "our system isn't accepting the rebooking request".
+  They chose a callback, were told "a colleague is free, connecting you", got 30 s of silence,
+  and the demo handoff hung up on them.
+- **Evidence.**
+  - `verify_booking` and `get_trip_status` succeeded in one turn. Every `find_dates` in later
+    turns returned `not_verified`. The model reported that as a system fault.
+  - The webhook's trace was `c421e27c6cacf`, the hash fallback: no `traceparent` reached the
+    webhook, so no turn was linked to the conversation. Each MCP turn fell through to its own
+    per-turn trace (rung 5 of `authenticate()`), so the binding made in turn A was invisible in
+    turn B. #8 assumed one trace id per conversation; this call didn't have one.
+  - `request_callback` returned `agents_available` although the caller had picked the callback,
+    and the model said "connecting" without calling the transition, so nothing moved until
+    the next turn.
+  - Separately, KV answered HTTP 500 for every key for hours: the console's state, scenario
+    loads (`config/assistants`) and flag flips all failed. Telnyx's status page showed nothing.
+    The demo data was a day old because the daily reload needs KV.
+- **Fixes.**
+  - Every booking tool takes optional `booking_code` and `last_name`. When the call isn't
+    linked, the server verifies them inline with the same attempt counter and lockout as
+    `verify_booking`, and links that turn. A lost link now costs nothing instead of failing.
+  - `not_verified` says it is not a system fault and how to recover; every prompt node says the
+    same, and that "connecting you" must call the transition in that same turn.
+  - `request_callback` takes `caller_chose_callback`: a caller who chose a callback gets one.
+  - Flags, the active scenario and the deploy settings (assistant ids, outbound config) moved
+    from KV to a `Config` actor. KV now holds only trace spans and the stampede lab, so a KV
+    outage costs the trace viewer and nothing else. The fault switch is an ordinary flag again.
+- **Takeaway.** Two dependencies that "never" fail failed on the same day. Identity now has a
+  path that doesn't depend on Telnyx's trace propagation, and config shares a store with seats.

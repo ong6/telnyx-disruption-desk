@@ -1,6 +1,6 @@
 // desk-dv: the dynamic-variables webhook. Telnyx calls it once at the start of every
 // conversation (assistant.initialization). It recognises the caller, reads their case from the
-// Trip actor, reads flags and the active incident from KV, and returns variables that both
+// Trip actor, reads flags and the active incident from the Config actor, and returns variables that both
 // personalise the conversation and drive the workflow's variable-comparison edges. It also mints
 // conversation to a CallSession actor under Telnyx's W3C trace id, which the MCP server reads.
 import { createHash, createPublicKey, verify } from "node:crypto";
@@ -71,7 +71,7 @@ export default {
       const signed = signatureValid(req, raw);
       const turnTrace = traceFrom(req.headers.get("traceparent"), "");
 
-      // Flags come from memory; on a cold process we don't wait for KV past the budget and leave
+      // Flags come from memory; on a cold process we don't wait for the Config actor past the budget and leave
       // the flag variables out, so the assistant's own defaults (kept in sync by desk-ops) apply.
       const cfg = await readConfigFast(env, 500);
       const flags = cfg?.flags ?? { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "off" as const, handoff: "transfer", fault: "off" };

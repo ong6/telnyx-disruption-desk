@@ -37,17 +37,6 @@ export class Metrics extends StatefulActor {
     await this.ctx.storage.put("calls", calls);
   }
 
-  // The fault switch lives in actor storage, not KV: a KV outage cannot hide it (its KV flag
-  // refresh failed for minutes while the desk kept serving, 2026-10-16). KV still holds a copy
-  // for the console pill; desk-mcp reads only this one.
-  async setFault(fault: "off" | "mcp_down"): Promise<{ fault: string }> {
-    await this.ctx.storage.put("fault", fault);
-    return { fault };
-  }
-  async fault(): Promise<string> {
-    return (await this.ctx.storage.get<string>("fault")) ?? "off";
-  }
-
   async callbackBooked(entry: { at: number; trace: string; booking: string; caller: string; reason: string }): Promise<void> {
     const list = (await this.ctx.storage.get<typeof entry[]>("callbacks")) ?? [];
     await this.ctx.storage.put("callbacks", [entry, ...list].slice(0, 20));

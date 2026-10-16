@@ -3,7 +3,7 @@
 // redeploy, add a relief flight. Also the lab routes for the stampede test.
 export { Canary } from "./canary";
 export { Surge } from "./surge";
-import { readConfig, readConfigFast, resetConfigCache, writeFlags, type Flags, type Scenario } from "../../../shared/config";
+import { readConfig, readConfigFast, readSetting, writeFlags, writeScenario, type Flags, type Scenario } from "../../../shared/config";
 import { URLS } from "../../../shared/endpoints";
 import { makeLogger } from "../../../shared/log";
 import { BOOKINGS, FLIGHTS, INCIDENTS, RELIEF_FLIGHT, SCHEDULE_DAYS } from "../../../shared/seed";
@@ -42,8 +42,8 @@ export default {
       }
       if (path === "/api/state") return json(await state(env));
       // Read by the workflow's handoff gate (a tool node): 200 = a person can take the call. The
-      // last known flags serve it, so a KV outage doesn't stop every transfer (DEBUGLOG #23);
-      // only a cold process that can't read KV answers 503, and the gate offers a callback.
+      // last known flags serve it, so a slow config read doesn't stop every transfer (DEBUGLOG #23);
+      // only a cold process that can't read the Config actor answers 503, and the gate offers a callback.
       if (path === "/api/queue") {
         const cfg = await readConfigFast(env, 1500);
         if (!cfg) return json({ queue: "unknown" }, 503);
@@ -63,12 +63,13 @@ export default {
         const flags = await writeFlags(env, patch);
         log.info("flags", { patch });
         if ("disruption_mode" in patch || "human_queue" in patch || "handoff" in patch) await syncAssistantDefaults(env, log);
-        if ("fault" in patch) {
-          // The switch desk-mcp actually reads lives in the Metrics actor; KV stays for the console pill.
-          await env.METRICS.idFromName("global").setFault(patch.fault);
-          await env.CANARY.idFromName("main").probeSoon();
-        }
+        if ("fault" in patch) await env.CANARY.idFromName("main").probeSoon();
         return json(flags);
+      }
+      // Deploy settings from assistant/build.mjs: the assistant ids and the outbound-call config.
+      if (path === "/api/settings" && req.method === "POST") {
+        const values = Object.fromEntries(Object.entries(body).filter(([k]) => k === "assistants" || k === "outbound"));
+        return json(await env.CONFIG.idFromName("global").setSettings(values));
       }
       if (path === "/api/relief" && req.method === "POST") {
         const { scenario } = await readConfig(env);
@@ -134,13 +135,12 @@ export default {
 
 /** Rebuild the reservation system, flight actors and trip actors for a scenario. */
 /**
- * Flags live in KV, but a cold webhook can't wait for a KV read (over a second) inside Telnyx's
- * ~1.2 s window. So every flag change is also written into both assistants' default dynamic
+ * Flags live in the Config actor, but a cold webhook may still miss Telnyx's ~1.2 s window. So every flag change is also written into both assistants' default dynamic
  * variables: a call routes on the right flags even if the webhook answers late or leaves them out.
  */
 async function syncAssistantDefaults(env: any, log: ReturnType<typeof makeLogger>) {
   const { flags, scenario } = await readConfig(env, true);
-  const ids: string[] = JSON.parse((await env.KV.get("config/assistants")) ?? "[]");
+  const ids = (await readSetting<string[]>(env, "assistants")) ?? [];
   const patch = { disruption_mode: flags.disruption_mode, human_queue: flags.human_queue, handoff: flags.handoff, incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "" };
   const headers = { authorization: `Bearer ${process.env.DESK_TELNYX_KEY}`, "content-type": "application/json" };
   await Promise.all(ids.map(async (id) => {
@@ -177,10 +177,10 @@ async function loadScenario(env: any, id: string, log: ReturnType<typeof makeLog
     BOOKINGS.map((b) => env.TRIP.idFromName(b.code).init({ ...b, phone: b.phone === "$DEMO_CALLER" ? process.env.DEMO_CALLER_NUMBER ?? "" : b.phone }, addDays(baseDate, b.day))),
   );
   const scenario: Scenario = { id, baseDate, notice: incident?.notice ?? "", cancelled: reset.cancelled ?? [], loadedAt: Date.now() };
-  await env.KV.put("scenario/active", JSON.stringify(scenario));
+  await writeScenario(env, scenario);
   await writeFlags(env, { disruption_mode: incident ? "on" : "off" });
-  resetConfigCache();
-  await syncAssistantDefaults(env, log);
+  // The data is loaded either way: a failed sync of the assistants' defaults is logged, not a 500.
+  await syncAssistantDefaults(env, log).catch((e) => log.error("assistant_defaults", { stage: "sync", err: String(e?.message ?? e).slice(0, 160) }));
   log.info("scenario", { id, baseDate, flights: flights.length, cancelled: scenario.cancelled });
   return { scenario, flights: flights.length, bookings: BOOKINGS.length };
 }

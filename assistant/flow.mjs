@@ -21,14 +21,22 @@ const expr = (expression) => ({ type: "expression", expression });
 const llm = (prompt) => ({ type: "llm", prompt });
 const DEFAULT = { type: "default" };
 
-const prompt = (id, name, instructions) => ({ id, name, type: "prompt", instructions_mode: "append", instructions: instructions.join("\n") });
+// Appended to every prompt node. A caller once heard "the system isn't accepting the request"
+// for what was a lost verification link, then "connecting you" followed by 30 s of silence
+// because the transition was never called (DEBUGLOG #27).
+const ALWAYS = [
+  "If a tool answers not_verified, call it again with the caller's booking_code and last_name (ask for them if you don't have them). It is never a system fault: don't tell the caller the system is down.",
+  "Whenever you tell the caller you're connecting them with a colleague, call the transition to a person in that same turn.",
+  "If the caller asks to be called back, call request_callback with caller_chose_callback set to true.",
+];
+const prompt = (id, name, instructions) => ({ id, name, type: "prompt", instructions_mode: "append", instructions: [...instructions, ...ALWAYS].join("\n") });
 const speak = (id, name, message) => ({ id, name, type: "speak", message });
 const tool = (id, name, shared_tool_id, message) => ({ id, name, type: "tool", shared_tool_id, message });
 
 /** Telnyx prefixes "transition__" (12 characters) and tool names allow [A-Za-z0-9_-]{1,64}. */
 export const EDGE_ID = /^[a-z0-9_]{1,52}$/;
 
-const VERIFY = "If caller_known is false and the caller isn't verified yet, ask for the 6-character booking code and their last name, and call verify_booking once you have both. If it fails, read back the code and the name you used, ask which one is wrong, and ask them to spell the name. After the third failed try, or when attempts_left is 0, tell them you're connecting them with a colleague and call the transition to a person.";
+const VERIFY = "If caller_known is false and the caller isn't verified yet, ask for the 6-character booking code and their last name, and call verify_booking once you have both. Once you have them, also pass booking_code and last_name to every booking tool you call. If it fails, read back the code and the name you used, ask which one is wrong, and ask them to spell the name. After the third failed try, or when attempts_left is 0, tell them you're connecting them with a colleague and call the transition to a person.";
 
 export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinAssistantId }) {
   const nodes = [
@@ -90,7 +98,7 @@ export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinA
     tool("n_demo_end", "Demo handoff: end call", hangupToolId, "I'd now connect you with a member of our team. This is a demo line, so the call ends here instead. Thanks for calling Nimbus Air."),
     prompt("n_callback", "Callback offer", [
       "Our team can't take a transfer right now. Apologise briefly and offer a callback from a person within two hours.",
-      "If they accept, call request_callback with a one-line reason for the agent (set transfer_failed to true if a transfer was just attempted). Then confirm it's booked and call the wrap-up transition.",
+      "If they accept, call request_callback with a one-line reason for the agent and caller_chose_callback set to true (and transfer_failed set to true if a transfer was just attempted). Then confirm it's booked and call the wrap-up transition.",
     ]),
     prompt("n_wrap", "Wrap up", ["Ask if there's anything else. If there isn't, thank them, wish them a safe trip, and end the call with the hangup tool."]),
   ];

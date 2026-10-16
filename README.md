@@ -71,7 +71,7 @@ NB860 is full, for the waitlist.
                   │ desk-ops: console, scenarios, flags, relief flight,      │
                   │ canary actor (every 60 s), trace viewer, stampede lab    │
                   └──────────────────────────────────────────────────────────┘
-                  KV: flags, active scenario, trace spans, outbound-call config
+                  Config actor: flags, active scenario, deploy settings · KV: trace spans
 ```
 
 ## Which primitive, and why
@@ -83,7 +83,7 @@ NB860 is full, for the waitlist.
 | One call's verified booking and failed attempts | **Actor `CallSession`** | Read on every tool call, must be consistent and fast; KV reads measured at over a second |
 | Live counters, recent calls, callback queue | **Actor `Metrics`** | Concurrent increments; KV would lose them |
 | Synthetic probe every minute | **Actor `Canary`** with an alarm | Edge Functions have no cron; an actor alarm re-arms itself |
-| Disruption mode, human queue, hold length | **KV flags** | Read on every call, written rarely by one operator; stale for 10 s is fine; flipped from the console without a redeploy |
+| Disruption mode, human queue, hold length, active scenario | **Actor `Config`** | Read on every call (cached 3 s per process), written rarely by one operator, flipped from the console without a redeploy. They were KV flags until KV failed for hours and took scenario loads and flag flips with it (DEBUGLOG #27) |
 | Trace spans | **KV**, one key per span | Append-only, written without waiting, read only when someone opens a trace |
 | Bookings and schedule | **SQL database** behind `desk-pss` | Stands in for the airline's own reservation system, which this product doesn't own |
 | Policy documents, itinerary receipts | **Cloud Storage** (ap-southeast-1) | Documents, not keys |
@@ -220,7 +220,7 @@ which points at chat sessions sharing MCP identity across parallel tests; it is 
 | Custom MCP server, at least 3 tools | `desk-mcp`: 11 tools (`verify_booking`, `get_trip_status`, `find_dates`, `find_flights`, `hold_seats`, `confirm_rebooking`, `request_refund`, `cancel_booking`, `join_waitlist`, `request_callback`, `get_policy`) |
 | Dynamic webhook variables from an Edge Function, influencing routing | `desk-dv`: caller ID → booking, case and flags; drives `disruption_mode`, `special_assistance` and `human_queue` edges, and words the opening (`opening_offer`) |
 | Edge Functions, `telnyx-edge ship` | `functions/desk-{dv,mcp,ops,pss}` |
-| KV | Flags and active scenario, trace spans, outbound-call config |
+| KV | Trace spans and the stampede lab only (config moved to the `Config` actor, DEBUGLOG #27) |
 | Stateful Actor, read-modify-write without a lock | `Flight.hold()`; [stampede evidence](docs/evidence/) |
 | Observability | Below |
 | OpenCode with Telnyx Inference | [DOGFOODING.md](DOGFOODING.md), [`.opencode/`](.opencode/) |
@@ -231,7 +231,7 @@ which points at chat sessions sharing MCP identity across parallel tests; it is 
 | Variable comparison edges | `special_assistance && human_queue == "open"`, `telnyx_last_tool_status_code == 200` (handoff gate), `telnyx_conversation_duration_secs >= 300` |
 | Alarms in actors | `Flight` (hold expiry, waitlist offers), `Trip` (outbound callback call), `Canary` (every minute) |
 | Object storage | Policy documents read by `get_policy` (uploaded with `scripts/upload-policies.mjs`); an itinerary receipt with the change fee written per rebooking (`receipts/<code>.json`) |
-| KV feature flags | Disruption mode, human queue, hold length: flipped on the console, no redeploy |
+| Feature flags (`Config` actor) | Disruption mode, human queue, hold length: flipped on the console, no redeploy |
 | Shared actors | `Flight`, `Trip`, `CallSession` and `Metrics` are owned by `desk-mcp`, bound by `desk-dv` and `desk-ops` |
 | Custom variables that route | `special_assistance` and `human_queue` (from the webhook) route; `incident_notice` and `opening_offer` make the opening; `caller_known` decides whether to verify |
 | Distributed tracing | One trace ID, Telnyx's own W3C trace ID, across webhook → KV/actors → MCP → reservation system; waterfall on the console |

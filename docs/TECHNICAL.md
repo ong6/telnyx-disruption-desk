@@ -25,11 +25,13 @@ Caller (phone) ──▶ Telnyx-managed: AI Assistant + Conversation Workflow
 | `desk-mcp` — MCP server + `Flight`/`Trip`/`CallSession`/`Metrics` actors | Edge Function + account-scoped actors | The only hop the model calls; business rules live here because the platform cannot scope MCP tools per node |
 | `desk-pss` — mock reservation system | Edge Function + SQL | Plays the airline's system of record; a REST boundary with a partner key keeps the integration honest |
 | `desk-ops` — console, canary, surge | Edge Function + actors | Must keep working (and watching) when everything else is broken; holds the write-access controls |
-| KV (`desk-kv`) | Edge KV | Flags, trace spans, outbound-call config — reads that tolerate staleness |
+| `Config` actor | Stateful Actor | Flags, active scenario, deploy settings (assistant ids, outbound-call config); cached 3 s per process |
+| KV (`desk-kv`) | Edge KV | Trace spans and the stampede lab — losing it costs the trace viewer, nothing on a call (DEBUGLOG #27) |
 | Object storage (`nimbus-desk-*`, ap-southeast-1) | Telnyx Cloud Storage | Policy documents (pushed by `scripts/upload-policies.mjs`), itinerary receipts — documents, not keys |
 
 State is deliberately split three ways: **actors** for per-entity read-modify-write that must
-be serialised, **KV** for read-mostly values where 10 s of staleness is fine, **function
+be serialised (config included, since KV failed for hours twice: DEBUGLOG #23, #27), **KV** for
+append-only trace spans nothing waits on, **function
 memory** for pure calculations (option ranking, spoken formatting).
 
 ## 2. Identity and authorisation (the model never decides who it acts on)

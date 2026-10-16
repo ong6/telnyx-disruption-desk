@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // Creates or updates everything on the Telnyx side, idempotently by name: the MCP server, shared
 // transfer and hangup tools, the Mandarin desk, the main Disruption Desk with its workflow, the
-// phone number assignment, and the outbound-callback config the Trip actor reads from KV.
+// phone number assignment, and the deploy settings (assistant ids, outbound-callback config) the
+// Config actor holds, written through desk-ops.
 // Usage: source scripts/env.sh && node assistant/build.mjs
 import { buildFlow } from "./flow.mjs";
 
 const API = "https://api.telnyx.com/v2";
-const { TELNYX_API_KEY, HUMAN_DESK_NUMBER, DESK_NUMBER } = process.env;
-const URLS = { mcp: "https://desk-mcp-299d7f49-1.telnyxcompute.com", dv: "https://desk-dv-da3c8445-f.telnyxcompute.com" };
-const KV_NAMESPACE = "22a353f3-671d-4118-87f3-04ba6a1070aa";
+const { TELNYX_API_KEY, HUMAN_DESK_NUMBER, DESK_NUMBER, DESK_ADMIN_TOKEN } = process.env;
+const URLS = { mcp: "https://desk-mcp-299d7f49-1.telnyxcompute.com", dv: "https://desk-dv-da3c8445-f.telnyxcompute.com", ops: "https://desk-ops-68bad318-0.telnyxcompute.com" };
 const VOICE_EN = "Telnyx.Ultra.f786b574-daa5-4673-aa0c-cbe3e8534c02";
 const VOICE_ZH = "Telnyx.Ultra.6eb8965c-e295-47bd-a9e4-3eeebb3abcff"; // Jing - Clear Coordinator
 const ALL_TOOLS = ["verify_booking", "get_trip_status", "find_dates", "find_flights", "hold_seats", "confirm_rebooking", "request_refund", "cancel_booking", "join_waitlist", "request_callback", "get_policy"];
@@ -80,20 +80,21 @@ async function upsertByName(listPath, createPath, updatePath, name, body, nameFi
   return api("POST", createPath, body);
 }
 
-async function kvGet(key) {
-  const r = await fetch(`${API}/storage/kvs/${KV_NAMESPACE}/keys/${encodeURIComponent(key)}`, { headers: { authorization: `Bearer ${TELNYX_API_KEY}` } });
-  return r.ok ? r.text() : null;
-}
-const kvPut = (key, value) => api("PUT", `/storage/kvs/${KV_NAMESPACE}/keys/${encodeURIComponent(key)}`, value);
+const ops = (path, body) =>
+  fetch(`${URLS.ops}${path}`, {
+    method: body ? "POST" : "GET",
+    headers: { authorization: `Bearer ${DESK_ADMIN_TOKEN}`, "content-type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(10_000),
+  }).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`ops ${path} -> ${r.status}`))));
 
 async function main() {
-  // Default variables carry the live flags too, so a late webhook still routes correctly. If KV
-  // can't be read, keep the flags the live assistant already has rather than resetting them to a
-  // normal day (KV failed for half an hour once, DEBUGLOG #23).
-  const [rawFlags, rawScenario] = [await kvGet("flags/all"), await kvGet("scenario/active")];
-  if (rawFlags && rawScenario) {
-    const flags = JSON.parse(rawFlags);
-    const scenario = JSON.parse(rawScenario);
+  // Default variables carry the live flags too, so a late webhook still routes correctly. If the
+  // console can't be read, keep the flags the live assistant already has rather than resetting
+  // them to a normal day.
+  const live = await ops("/api/state").catch(() => null);
+  if (live?.flags) {
+    const { flags, scenario } = live;
     Object.assign(DEFAULT_VARS, {
       disruption_mode: flags.disruption_mode ?? "off",
       human_queue: flags.human_queue ?? "open",
@@ -101,9 +102,9 @@ async function main() {
       incident_notice: flags.disruption_mode === "on" ? scenario?.notice ?? "" : "",
     });
   } else {
-    const live = (await list("/ai/assistants")).find((a) => a.name === "Nimbus Air Disruption Desk")?.dynamic_variables ?? {};
-    for (const k of ["disruption_mode", "human_queue", "incident_notice"]) if (k in live) DEFAULT_VARS[k] = live[k];
-    console.warn("KV unreadable: kept the live assistant's flags", DEFAULT_VARS.disruption_mode, DEFAULT_VARS.human_queue);
+    const cur = (await list("/ai/assistants")).find((a) => a.name === "Nimbus Air Disruption Desk")?.dynamic_variables ?? {};
+    for (const k of ["disruption_mode", "human_queue", "handoff", "incident_notice"]) if (k in cur) DEFAULT_VARS[k] = cur[k];
+    console.warn("console unreadable: kept the live assistant's flags", DEFAULT_VARS.disruption_mode, DEFAULT_VARS.human_queue);
   }
 
   // 1. MCP server. Telnyx authenticates with a static bearer (integration secret); the server
@@ -222,12 +223,11 @@ async function main() {
     }
   }
   try {
-    if (texmlAppId) await kvPut("config/outbound", JSON.stringify({ texmlAppId, from: DESK_NUMBER, assistantId: main.id }));
-    await kvPut("config/assistants", JSON.stringify([main.id, zh.id]));
+    await ops("/api/settings", { assistants: [main.id, zh.id], ...(texmlAppId ? { outbound: { texmlAppId, from: DESK_NUMBER, assistantId: main.id } } : {}) });
   } catch (e) {
-    console.warn("KV config not written (the previous values stay):", e.message.slice(0, 120));
+    console.warn("settings not written (the previous values stay):", e.message.slice(0, 120));
   }
-  console.log("kv config written; default flags", DEFAULT_VARS.disruption_mode, DEFAULT_VARS.human_queue);
+  console.log("settings written; default flags", DEFAULT_VARS.disruption_mode, DEFAULT_VARS.human_queue);
 }
 
 main().catch((e) => {

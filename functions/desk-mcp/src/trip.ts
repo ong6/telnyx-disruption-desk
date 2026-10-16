@@ -85,7 +85,7 @@ export class Trip extends StatefulActor {
     const s = await this.load();
     if (!s?.callback || s.callback.placedAt) return;
     const env = this.env as any;
-    const cfg = JSON.parse((await env.KV.get("config/outbound")) ?? "null");
+    const cfg: any = await env.CONFIG.idFromName("global").setting("outbound");
     const apiKey = await env.SECRETS.get("TELNYX_KEY");
     let result = "skipped: no outbound config";
     if (cfg && apiKey && s.booking.phone.startsWith("+")) {

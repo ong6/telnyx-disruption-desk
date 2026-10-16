@@ -107,7 +107,7 @@ serialises; last-write-wins oversells.
 | 10 | Human handoff: deterministic queue gate, warm transfer, callback fallback, 3-strikes lockout, 5-minute timer | flow tool nodes + `desk-ops /api/queue` |
 | 11 | Refunds, and voluntary cancels for 12-month travel credit, with the reference read letter by letter; eligibility enforced server-side | `request_refund`, `cancel_booking` |
 | 12 | Itinerary receipts and policy documents in object storage | `desk-mcp` `DOCS` binding |
-| 13 | Feature flags without a redeploy, synced into assistant defaults | KV + `desk-ops` |
+| 13 | Feature flags without a redeploy, synced into assistant defaults | `Config` actor + `desk-ops` |
 | 14 | Ops console: departures board, KPIs, passengers, callback queue, trace waterfall, live call ticker | `desk-ops` |
 | 15 | Surge simulator: 200 concurrent passengers through the real tools, with live progress and latency percentiles | `Surge` actor |
 | 16 | Canary: a synthetic probe every 60 s, health pill, "tool errors (1 min)" tile | `Canary` actor |

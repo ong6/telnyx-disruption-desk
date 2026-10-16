@@ -1,7 +1,7 @@
-// Flags and the active scenario live in KV: read on every call, written rarely by one
-// operator, so last-write-wins and a little staleness are fine. A KV read costs over a second
-// from a function, so each process keeps them in memory for 10 s: a flag flipped on the console
-// reaches new calls within about 10 seconds, with no redeploy.
+// Flags and the active scenario live in the Config actor (desk-mcp owns it; every function binds
+// it as CONFIG). They were in KV, and a KV outage took scenario loads, flag flips and the
+// webhook's flags down with it (DEBUGLOG #27). Each process keeps them in memory for 3 s, so a
+// flag flipped on the console reaches new calls within a few seconds, with no redeploy.
 export interface Flags {
   disruption_mode: "on" | "off";
   human_queue: "open" | "full";
@@ -21,42 +21,49 @@ export interface Scenario {
 }
 
 const DEFAULTS: Flags = { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "off", handoff: "transfer", fault: "off" };
+const TTL_MS = 3_000;
 let cache: { at: number; flags: Flags; scenario: Scenario | null } | null = null;
 
+const config = (env: any) => env.CONFIG.idFromName("global");
+
 export async function readConfig(env: any, force = false): Promise<{ flags: Flags; scenario: Scenario | null }> {
-  if (!force && cache && Date.now() - cache.at < 10_000) return cache;
-  const [raw, sc] = await Promise.all([env.KV.get("flags/all"), env.KV.get("scenario/active")]);
-  const flags = { ...DEFAULTS, ...(raw ? JSON.parse(raw) : {}) } as Flags;
-  const scenario = sc ? (JSON.parse(sc) as Scenario) : null;
-  cache = { at: Date.now(), flags, scenario };
+  if (!force && cache && Date.now() - cache.at < TTL_MS) return cache;
+  const c = await config(env).get();
+  cache = { at: Date.now(), flags: { ...DEFAULTS, ...(c?.flags ?? {}) } as Flags, scenario: c?.scenario ?? null };
   return cache;
 }
 
 /**
- * For the webhook's hot path: never wait more than `budgetMs` for KV. Serves the last value
- * this process saw (even if stale) and refreshes it in the background; returns null on a cold
- * process whose first KV read is slower than the budget, or fails. Never throws.
+ * For hot paths: never wait more than `budgetMs`. Serves the last value this process saw (even
+ * if stale) and refreshes it in the background; returns null on a cold process whose first read
+ * is slower than the budget, or fails. Never throws.
  */
 let refreshing: Promise<unknown> | null = null;
 export async function readConfigFast(env: any, budgetMs: number): Promise<{ flags: Flags; scenario: Scenario | null } | null> {
-  const fresh = cache && Date.now() - cache.at < 10_000;
+  const fresh = cache && Date.now() - cache.at < TTL_MS;
   if (fresh) return cache;
   // A failed refresh must never reject: with a cache, nothing awaits it, and an unhandled
-  // rejection took the process (and a hold_seats in flight) down during a KV outage (DEBUGLOG #23).
+  // rejection took the process (and a hold_seats in flight) down once (DEBUGLOG #23).
   const load = (refreshing ??= readConfig(env, true)
-    .catch((e) => console.error(JSON.stringify({ ts: new Date().toISOString(), svc: "config", lvl: "error", ev: "kv_refresh_failed", err: String(e?.message ?? e).slice(0, 160) })))
+    .catch((e) => console.error(JSON.stringify({ ts: new Date().toISOString(), svc: "config", lvl: "error", ev: "config_refresh_failed", err: String(e?.message ?? e).slice(0, 160) })))
     .finally(() => (refreshing = null)));
   if (cache) return cache; // stale-while-revalidate
   return Promise.race([load.then(() => cache), new Promise<null>((r) => setTimeout(() => r(null), budgetMs))]);
 }
 
 export async function writeFlags(env: any, patch: Partial<Flags>): Promise<Flags> {
-  const { flags } = await readConfig(env);
-  const next = { ...flags, ...patch };
-  await env.KV.put("flags/all", JSON.stringify(next));
+  const next = { ...DEFAULTS, ...(await config(env).setFlags(patch)) } as Flags;
   cache = null;
   return next;
 }
+
+export async function writeScenario(env: any, scenario: Scenario): Promise<void> {
+  await config(env).setScenario(scenario);
+  cache = null;
+}
+
+/** Deploy settings: `assistants` (ids whose default variables mirror the flags), `outbound`. */
+export const readSetting = async <T>(env: any, key: string): Promise<T | null> => (await config(env).setting(key)) as T | null;
 
 export const resetConfigCache = () => {
   cache = null;

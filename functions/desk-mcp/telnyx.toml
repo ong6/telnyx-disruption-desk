@@ -19,6 +19,10 @@ type = "Metrics"
 binding = "CALL"
 type = "CallSession"
 
+[[actors]]
+binding = "CONFIG"
+type = "Config"
+
 [storage.kv.KV]
 id = "22a353f3-671d-4118-87f3-04ba6a1070aa"
 

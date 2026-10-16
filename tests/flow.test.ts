@@ -48,3 +48,11 @@ test("rebooking asks for the date before the time, and every prompt node is scop
   for (const node of flow.nodes.filter((n: any) => n.type === "prompt")) assert.ok(node.id in scope, node.id);
   assert.equal(flow.nodes.find((n: any) => n.id === flow.start_node_id).type, "speak");
 });
+
+test("every prompt node treats not_verified as re-verify, and moves the call when it says it's connecting", () => {
+  const { flow } = buildFlow({ transferToolId: "t", hangupToolId: "h", queueToolId: "q", mandarinAssistantId: "m" });
+  for (const node of flow.nodes.filter((x: any) => x.type === "prompt")) {
+    assert.match(node.instructions, /not_verified.*never a system fault/, node.id);
+    assert.match(node.instructions, /connecting them with a colleague, call the transition to a person in that same turn/, node.id);
+  }
+});
