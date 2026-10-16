@@ -31,7 +31,7 @@ Bookings to try when calling from an unrecognised number (say the code, then the
 | `T4M8RA` | Tan | Family of four on a cancelled flight: seats are held all-or-nothing |
 | `L9W3PE` | Lim | Wheelchair assistance on the booking: goes straight to a specialist |
 | `R2D5VK` | Raman | Platinum, two passengers, cancelled flight |
-| `H8N6CU` | Hughes | Tokyo flight, not affected: normal-day questions; a change costs 100 Singapore dollars, a cancel keeps the fare as travel credit |
+| `H8N6CU` | Hughes | Tokyo flight, not affected: normal-day questions; a change costs 100 Singapore dollars, a cancel refunds 100 Singapore dollars (a sample amount) |
 
 The demo caller's own number is recognised by caller ID and greeted by name.
 
@@ -47,7 +47,7 @@ NB860 is full, for the waitlist.
 ```
                    ┌──────────────────────────── Telnyx AI Assistant: Disruption Desk ───────────────────────────┐
  Caller ──PSTN──▶  │ opening ─▶ triage ─┬──▶ rebook: date, then time ─▶ confirm ─▶ wrap up                        │
-                   │ (speak)   (prompt) ├──▶ cancel ─▶ travel credit, or refund rights (speak) ─▶ refund          │
+                   │ (speak)   (prompt) ├──▶ cancel ─▶ S$100 refund, or refund rights (speak) ─▶ refund          │
                    │                    ├──▶ status & policy                                                      │
                    │                    ├──▶ handoff gate (tool) ─▶ transfer │ callback                           │
                    │                    └──▶ Mandarin Desk (second assistant)                                     │
@@ -104,7 +104,7 @@ The alarm frees the seat promptly and offers it to the waitlist.
 | `n_triage` | prompt, append, no tools | Only picks a transition; if the need isn't clear, asks one question: rebook, cancel, or a person? | `special_assistance == "true" && human_queue == "open"` → specialist (expression); rebook / cancel / status / Mandarin (LLM) |
 | `n_rebook` | prompt, append, MCP | Verify if needed; the date first (`find_dates`), then up to three times that day (`find_flights`); hold; read back the flight, passengers and change fee | held and yes → confirm; nothing fits → waitlist; would rather cancel → cancel |
 | `n_confirm` | prompt, append, MCP | Confirm, read the code back letter by letter, with the change fee | done → wrap up; hold expired → rebook |
-| `n_cancel` | prompt, append, MCP | Verify. If Nimbus cancelled or delayed the flight, go to refund rights; otherwise explain travel credit (12 months) or a change for the fee, and `cancel_booking` on a yes | disrupted → refund rights; changes their mind → rebook; done → wrap up |
+| `n_cancel` | prompt, append, MCP | Verify. If Nimbus cancelled or delayed the flight, go to refund rights; otherwise explain the 100 Singapore dollar refund (a sample amount) or a change for the fee, and `cancel_booking` on a yes | disrupted → refund rights; changes their mind → rebook; done → wrap up |
 | `n_refund_rights` | speak | Refund-rights statement, verbatim | default |
 | `n_refund` | prompt, append, MCP | Refund, or explain why not and offer a change | done → wrap up; changed mind → rebook |
 | `n_waitlist` | prompt, append, MCP | Waitlist plus automatic callback; hotel and meal voucher | done |
@@ -202,7 +202,7 @@ Results on the finished build (Oct 12–13; Telnyx KV was failing on and off at 
 | Typhoon rebook: date, then time, free under the waiver, hold, confirm | pass ([run](docs/evidence/voice-2026-10-12-16-34.md)) | fail: shared chat sessions mixed two bookings (see the note below the table) |
 | Normal-route change: 100 dollar fee, then confirm | pass ([run](docs/evidence/voice-2026-10-12-17-01.md)) | fail: ran on a booking the voice run had already changed |
 | Cancel a typhoon-cancelled flight: refund rights read verbatim, then refund | pass | pass |
-| Cancel an operating flight: travel credit | pass | — |
+| Cancel an operating flight: 100 dollar refund (was travel credit until Oct 16; not re-run yet) | — | — |
 | Mandarin handoff | pass | pass (desk direct) |
 | Family of four, three failed verifications, baggage policy, ask for a person | — | pass ([run](docs/evidence/tests-2026-10-12-17-05.md)) |
 | Ask for a person on a call: queue open → transfer (the transfer pointed at an AI for the test); transfer fails or queue can't be checked → callback | pass (DEBUGLOG #24) | pass |
@@ -292,9 +292,9 @@ Infrastructure (created once): KV namespace `desk-kv`, SQL database `desk-pss`, 
 - **Chat isn't the product channel.** Telnyx runs the webhook later in chat than on calls
   (DEBUGLOG #6), so the opening branch is tested by phone. Transitions also work differently on
   a call (DEBUGLOG #21), so every workflow change gets a voice run as well as the chat suite.
-- **Fees and credit are recorded, not collected.** The change fee is on the receipt and in the
-  reservation system's change log, with no payment step, and a travel credit reference isn't
-  redeemable by any tool yet.
+- **Fees and refunds are recorded, not paid.** The change fee is on the receipt and in the
+  reservation system's change log, with no payment step, and the 100 dollar cancellation refund
+  is a sample amount: the mock reservation system keeps no fares.
 - **Demo conveniences, named as such.** The ops console's read endpoints (`/api/state`,
   `/api/trace`) now take the operator key; `/api/queue` stays open because the workflow's
   handoff-gate tool node carries no credentials. The admin token is accepted as a `?key=`

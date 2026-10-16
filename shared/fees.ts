@@ -1,6 +1,8 @@
 // What a change costs. One flat fee per booking, the same for every flight offered, waived when
 // the typhoon waiver covers the route or Nimbus Air cancelled the original flight.
 export const CHANGE_FEE_SGD = 100;
+// What a cancellation refunds. A sample amount for the demo: the mock reservation system keeps no fares.
+export const REFUND_SGD = 100;
 
 export interface ChangeFee { amount: number; waivedBy: "typhoon_waiver" | "flight_cancelled" | null; say: string }
 

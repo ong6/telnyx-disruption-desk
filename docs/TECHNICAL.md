@@ -65,8 +65,8 @@ memory** for pure calculations (option ranking, spoken formatting).
   once) and its full flights, for the waitlist. Then `hold_seats`, a read-back with the fee,
   and a yes.
 - **Cancel splits on who cancelled.** If Nimbus cancelled or delayed the flight, the caller
-  gets the verbatim refund rights and `request_refund`; otherwise the fare becomes travel credit
-  for 12 months (`cancel_booking`: reservation system `POST /v1/bookings/:code/cancel`, a `CR…`
+  gets the verbatim refund rights and `request_refund`; otherwise the cancel refunds a sample 100 Singapore dollars
+  (`cancel_booking`: reservation system `POST /v1/bookings/:code/cancel`, a `CR…`
   reference, seats returned, the Trip's status `cancelled`).
 - **The change fee** ([`shared/fees.ts`](../shared/fees.ts)) is one flat 100 Singapore dollars
   per booking, the same for every option, waived under the Typhoon Koinu waiver (the typhoon
@@ -212,5 +212,5 @@ fix. The five most instructive:
   stalls (DEBUGLOG #6, #17); the suite targets the Mandarin desk directly for that reason. And
   transitions work differently on a call (DEBUGLOG #21), so every workflow change gets a voice
   run as well as the chat suite.
-- The change fee and travel credit are recorded, not collected: there is no payment step, and no
-  tool redeems a credit reference yet.
+- The change fee and refunds are recorded, not paid: there is no payment step, and the 100 dollar
+  refund is a sample amount, since the mock reservation system keeps no fares.

@@ -71,8 +71,8 @@ export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinA
       "The caller wants to cancel their flight.",
       `1. Verify. ${VERIFY}`,
       "2. If Nimbus Air cancelled or delayed their flight (flight_status, or original_flight_status from a tool), call the refund transition straight away: they're entitled to a full refund.",
-      "3. Otherwise the flight is operating. Say, in two short sentences, that the fare isn't refundable, but if they cancel the full ticket value is kept as travel credit for 12 months; or you can move them to another date and time for a 100 Singapore dollar change fee. Ask whether to cancel.",
-      "4. On a clear yes, call cancel_booking and give the travel credit reference using the spelled version. If they'd rather change the flight, call the rebook transition. Then call the wrap-up transition.",
+      "3. Otherwise the flight is operating. Say, in two short sentences, that if they cancel we refund 100 Singapore dollars to their original card within 7 business days, or you can move them to another date and time for a 100 Singapore dollar change fee. Ask whether to cancel.",
+      "4. On a clear yes, call cancel_booking and say its say line: the 100 Singapore dollar refund and the reference, using the spelled version. If they'd rather change the flight, call the rebook transition. Then call the wrap-up transition.",
     ]),
     speak("n_refund_rights", "Refund rights (verbatim)", "Because Nimbus Air cancelled your flight, you're entitled to a full refund of your ticket, including taxes and fees, to your original form of payment within seven business days. You can also move to another Nimbus Air flight within seven days at no cost. Would you like me to process the full refund now?"),
     prompt("n_refund", "Refund", [
@@ -142,7 +142,7 @@ export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinA
   edge("n_confirm", "n_rebook", llm("The hold expired, or the caller wants a different flight after all."));
   edge("n_cancel", "n_refund_rights", llm("Nimbus Air cancelled or delayed the caller's flight, so they are entitled to a full refund."));
   edge("n_cancel", "n_rebook", llm("The caller decides to change their flight instead of cancelling."));
-  edge("n_cancel", "n_wrap", llm("The booking is cancelled and the caller has the travel credit reference, or they decided to keep their booking."));
+  edge("n_cancel", "n_wrap", llm("The booking is cancelled and the caller has the refund reference, or they decided to keep their booking."));
   edge("n_refund_rights", "n_refund", DEFAULT);
   edge("n_refund", "n_wrap", llm("The refund is done, or the caller was told they aren't eligible and has no further request."));
   edge("n_refund", "n_rebook", llm("The caller decides to change their flight instead of a refund."));

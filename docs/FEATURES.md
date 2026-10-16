@@ -105,7 +105,7 @@ serialises; last-write-wins oversells.
 | 8 | Per-passenger case state across calls: holds, rebookings, refunds, cancellations, waitlist, callbacks | `Trip` actor |
 | 9 | Waitlist with actor-alarm seat offers and real outbound AI callbacks | `Flight` + `Trip` alarms |
 | 10 | Human handoff: deterministic queue gate, warm transfer, callback fallback, 3-strikes lockout, 5-minute timer | flow tool nodes + `desk-ops /api/queue` |
-| 11 | Refunds, and voluntary cancels for 12-month travel credit, with the reference read letter by letter; eligibility enforced server-side | `request_refund`, `cancel_booking` |
+| 11 | Refunds, and voluntary cancels refunding a sample 100 Singapore dollars, with the reference read letter by letter; eligibility enforced server-side | `request_refund`, `cancel_booking` |
 | 12 | Itinerary receipts and policy documents in object storage | `desk-mcp` `DOCS` binding |
 | 13 | Feature flags without a redeploy, synced into assistant defaults | `Config` actor + `desk-ops` |
 | 14 | Ops console: departures board, KPIs, passengers, callback queue, trace waterfall, live call ticker | `desk-ops` |

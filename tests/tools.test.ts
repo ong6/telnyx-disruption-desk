@@ -23,7 +23,8 @@ function harness(flags: Record<string, string> = {}) {
   const callbacks: any[] = [];
   const env = {
     CALL: { idFromName: session },
-    TRIP: { idFromName: () => ({ get: async () => null, verifyFailed: async () => ({}), escalated: async () => ({}) }) },
+    TRIP: { idFromName: () => ({ get: async () => null, verifyFailed: async () => ({}), escalated: async () => ({}), cancelled: async () => ({}) }) },
+    FLIGHT: { idFromName: () => ({ returnSeats: async () => ({}), release: async () => ({}) }) },
     METRICS: { idFromName: () => ({ callbackBooked: async (e: any) => callbacks.push(e) }) },
     CONFIG: { idFromName: () => ({ get: async () => ({ flags, scenario: null }) }) },
   };
@@ -31,6 +32,7 @@ function harness(flags: Record<string, string> = {}) {
     const path = new URL(url).pathname;
     if (path === `/v1/bookings/${BOOKING.code}`) return new Response(JSON.stringify(BOOKING));
     if (path.startsWith("/v1/flights/")) return new Response(JSON.stringify(FLIGHT));
+    if (path === `/v1/bookings/${BOOKING.code}/cancel`) return new Response(JSON.stringify({ credit_ref: "CR7K2PQ" }));
     return new Response("{}", { status: 404 });
   }) as typeof fetch;
   resetConfigCache();
@@ -75,4 +77,14 @@ test("a caller who chose a callback gets one even while a person is free", async
   const booked: any = await TOOLS.request_callback.run(h.ctx("t"), { reason: "rebook", caller_chose_callback: true });
   assert.equal(booked.booked, true);
   assert.equal(h.callbacks.length, 1);
+});
+
+test("cancelling an operating flight refunds the sample 100 Singapore dollars", async () => {
+  const h = harness();
+  const args = { booking_code: "K7Q2ZX", last_name: "Ong" };
+  const out: any = await TOOLS.cancel_booking.run(h.ctx("t", args), args);
+  assert.equal(out.cancelled, true);
+  assert.equal(out.refund_sgd, 100);
+  assert.match(out.say, /refund 100 Singapore dollars/);
+  assert.doesNotMatch(out.say, /credit/);
 });

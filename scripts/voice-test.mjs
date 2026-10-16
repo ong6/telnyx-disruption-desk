@@ -63,9 +63,9 @@ const SCENARIOS = {
     },
   },
   "cancel-credit": {
-    persona: `${PLAY} You are Daniel Hughes, booking code H8N6CU, last name Hughes. Your trip to Tokyo is off and you want to cancel your flight. Accept the travel credit and say yes clearly when asked to cancel. Repeat the credit reference. ${END}`,
+    persona: `${PLAY} You are Daniel Hughes, booking code H8N6CU, last name Hughes. Your trip to Tokyo is off and you want to cancel your flight. Accept the refund and say yes clearly when asked to cancel. Repeat the refund reference. ${END}`,
     checks: {
-      "explains travel credit": ({ desk }) => said(desk, /credit/i),
+      "states the 100 dollar refund": ({ desk }) => said(desk, /refund 100 Singapore dollars|100 Singapore dollars/i),
       "booking cancelled": ({ tools }) => tools.includes("cancel_booking"),
       "no refund-rights statement": ({ desk }) => !said(desk, /entitled to a full refund/i),
     },

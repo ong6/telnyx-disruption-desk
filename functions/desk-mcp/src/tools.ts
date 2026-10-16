@@ -4,7 +4,7 @@
 // hold, the change fee is computed here, no refund unless the flight was disrupted.
 import { readConfigFast } from "../../../shared/config";
 import { pss, type PssBooking } from "../../../shared/pss-client";
-import { changeFee } from "../../../shared/fees";
+import { changeFee, REFUND_SGD } from "../../../shared/fees";
 import { departuresOn, travelDates, type RankOpts } from "../../../shared/rank";
 import type { CallClaims, FlightSnapshot, TripState } from "../../../shared/types";
 import { AIRLINE, SCHEDULE_DAYS } from "../../../shared/seed";
@@ -100,7 +100,7 @@ async function caseSummary(ctx: ToolCtx, b: PssBooking) {
     held_seat: hold ? { flight_id: hold.flightId, minutes_left: Math.max(1, Math.round((hold.expiresAt - Date.now()) / 60000)) } : null,
     rebooked: b.confirmation ? { flight: `${b.new_flight} on ${b.new_date}`, confirmation_code: b.confirmation, spelled: spell(b.confirmation) } : null,
     refund_reference: b.status === "refunded" ? b.refund_ref : null,
-    travel_credit_reference: b.status === "cancelled" ? b.refund_ref : null,
+    cancellation_refund_reference: b.status === "cancelled" ? b.refund_ref : null,
     waitlisted_for: t?.status === "waitlisted" ? t.waitlist?.flightId : null,
     tier: b.tier,
     special_assistance: b.assistance,
@@ -283,10 +283,10 @@ export const TOOLS: Record<string, Tool> = {
       const b = await requireBooking(ctx);
       // Already refunded (or the same request delivered twice): the same answer, not a second refund.
       if (b.status === "refunded" && b.refund_ref)
-        return { refunded: true, refund_reference: b.refund_ref, spelled: spell(b.refund_ref), timeline: "back on the original card within 7 business days", say: `Your refund is done. The reference is ${spell(b.refund_ref)}.` };
+        return { refunded: true, refund_sgd: REFUND_SGD, refund_reference: b.refund_ref, spelled: spell(b.refund_ref), timeline: "back on the original card within 7 business days", say: `Your refund of ${REFUND_SGD} Singapore dollars is done. The reference is ${spell(b.refund_ref)}.` };
       const orig = await pss(ctx.env, ctx.claims.trace, ctx.log).flight(b.flight, b.date);
       if (orig?.status !== "cancelled" && orig?.status !== "delayed")
-        return { refunded: false, reason: "not_eligible", next: "explain the fare is non-refundable for a voluntary cancellation; offer to change the flight instead" };
+        return { refunded: false, reason: "flight_operating", next: "their flight is operating: use cancel_booking, which also refunds the caller" };
       const t: TripState | null = await trip(ctx, b.code).get();
       const { refund_ref } = await pss(ctx.env, ctx.claims.trace, ctx.log).refund(b.code, String(reason ?? "flight disrupted"));
       // Only free seats once the refund actually went through, and free whatever the caller was
@@ -295,20 +295,20 @@ export const TOOLS: Record<string, Tool> = {
       if (t?.rebookedTo) await flight(ctx, t.rebookedTo.flightId).returnSeats(b.code, b.pax).catch(() => {});
       await trip(ctx, b.code).refunded(refund_ref);
       return {
-        refunded: true, refund_reference: refund_ref, spelled: spell(refund_ref), timeline: "back on the original card within 7 business days",
-        say: `Your refund is done. The reference is ${spell(refund_ref)}. The money will be back on your original card within 7 business days.`,
+        refunded: true, refund_sgd: REFUND_SGD, refund_reference: refund_ref, spelled: spell(refund_ref), timeline: "back on the original card within 7 business days",
+        say: `Your refund of ${REFUND_SGD} Singapore dollars is done. The reference is ${spell(refund_ref)}. The money will be back on your original card within 7 business days.`,
       };
     },
   },
 
   cancel_booking: {
     description:
-      "Cancel the booking when the caller no longer wants to travel and their flight is operating. The fare isn't refunded; its full value is kept as travel credit for 12 months. Explain that and get a clear yes first. If Nimbus Air cancelled or delayed their flight, use request_refund instead.",
+      `Cancel the booking when the caller no longer wants to travel and their flight is operating. We refund ${REFUND_SGD} Singapore dollars to the original card within 7 business days. Say that and get a clear yes first. If Nimbus Air cancelled or delayed their flight, use request_refund instead.`,
     inputSchema: { type: "object", properties: {} },
     async run(ctx) {
       const b = await requireBooking(ctx);
       if (b.status === "cancelled" && b.refund_ref)
-        return { cancelled: true, travel_credit_reference: b.refund_ref, spelled: spell(b.refund_ref), valid_for: "12 months", say: `Your booking is cancelled. Your travel credit reference is ${spell(b.refund_ref)}, valid for 12 months.` };
+        return { cancelled: true, refund_sgd: REFUND_SGD, refund_reference: b.refund_ref, spelled: spell(b.refund_ref), say: `Your booking is cancelled, and ${REFUND_SGD} Singapore dollars is on its way back to your card. Your reference is ${spell(b.refund_ref)}.` };
       if (b.status === "refunded") return { cancelled: false, reason: "already_refunded", next: "tell the caller the booking was already refunded and give the reference from get_trip_status" };
       const orig = await pss(ctx.env, ctx.claims.trace, ctx.log).flight(b.flight, b.date);
       if (orig?.status === "cancelled" || orig?.status === "delayed")
@@ -322,8 +322,8 @@ export const TOOLS: Record<string, Tool> = {
       await flight(ctx, seatsOn).returnSeats(b.code, b.pax).catch(() => {});
       await trip(ctx, b.code).cancelled(credit_ref);
       return {
-        cancelled: true, travel_credit_reference: credit_ref, spelled: spell(credit_ref), valid_for: "12 months",
-        say: `Your booking is cancelled. The full ticket value is kept as travel credit for 12 months, under reference ${spell(credit_ref)}. You can use it on any Nimbus Air flight.`,
+        cancelled: true, refund_sgd: REFUND_SGD, refund_reference: credit_ref, spelled: spell(credit_ref), timeline: "back on the original card within 7 business days",
+        say: `Your booking is cancelled, and we'll refund ${REFUND_SGD} Singapore dollars to your original card within 7 business days. Your reference is ${spell(credit_ref)}.`,
       };
     },
   },
