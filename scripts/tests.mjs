@@ -2,7 +2,7 @@
 // Scenario tests on Telnyx's built-in assistant testing: a simulated caller with instructions,
 // graded against a rubric. Creates or updates each test by name in one suite, runs the suite,
 // waits for results, and writes them to docs/evidence/.
-// Usage: source scripts/env.sh && node scripts/tests.mjs [create|run|all]
+// Usage: source scripts/env.sh && node scripts/tests.mjs [create|run|normal|all]
 import { writeFileSync } from "node:fs";
 
 const API = "https://api.telnyx.com/v2";
@@ -40,6 +40,19 @@ const TESTS = [
   },
   {
     // An unaffected route on the typhoon day: the waiver doesn't apply, so the change has a fee.
+    name: "Cancel an operating flight: 100 dollar refund",
+    // Its own suite on a normal day: on a typhoon day Hughes's Tokyo flight is the only operating
+    // booking, and the 100 dollar change test above uses it.
+    suite: "disruption-desk-normal",
+    instructions: "You are Daniel Hughes, booking code H8N6CU, last name Hughes. Your trip to Tokyo is off and you want to cancel your flight. Say yes clearly when asked to confirm the cancellation. Ask them to repeat the reference once.",
+    rubric: [
+      { name: "Refund amount", criteria: "Says the cancellation refunds 100 Singapore dollars to the original card, before asking the caller to confirm." },
+      { name: "Cancelled", criteria: "Confirms the booking is cancelled and gives a reference, read letter by letter." },
+      { name: "No travel credit", criteria: "Never offers travel credit instead of the refund." },
+      PHONE_MANNER,
+    ],
+  },
+  {
     name: "Normal change costs 100 dollars",
     instructions: "You are Daniel Hughes, booking code H8N6CU, last name Hughes. Your flight from Singapore to Tokyo is operating normally but you want to fly on a different day. When asked which day, choose the first day offered that isn't today; when offered times, choose the latest one offered. Accept the change fee and say yes clearly when asked to confirm.",
     rubric: [
@@ -102,24 +115,25 @@ async function create() {
   const existing = await api("GET", `/ai/assistants/tests?page%5Bsize%5D=100`).catch(() => []);
   const list = Array.isArray(existing) ? existing : existing.data ?? [];
   for (const t of TESTS) {
-    const body = { ...t, destination: t.destination ?? ASSISTANT, telnyx_conversation_channel: "web_chat", max_duration_seconds: 300, test_suite: SUITE };
+    const { suite, ...rest } = t;
+    const body = { ...rest, destination: t.destination ?? ASSISTANT, telnyx_conversation_channel: "web_chat", max_duration_seconds: 300, test_suite: suite ?? SUITE };
     const found = list.find((x) => x.name === t.name);
     const saved = found ? await api("PUT", `/ai/assistants/tests/${found.test_id ?? found.id}`, body) : await api("POST", "/ai/assistants/tests", body);
     console.log(found ? "updated" : "created", t.name, saved.test_id ?? saved.id);
   }
 }
 
-async function run() {
+async function run(suite = SUITE, scenario = "typhoon") {
   // Every test mutates shared bookings, so each suite run starts from a fresh scenario load.
   // Skipping this once made a refund test grade a booking the previous run had already refunded.
   const reset = await fetch(`${process.env.OPS_URL ?? "https://desk-ops-68bad318-0.telnyxcompute.com"}/api/scenario`, {
     method: "POST", headers: { authorization: `Bearer ${process.env.DESK_ADMIN_TOKEN}`, "content-type": "application/json" },
-    body: JSON.stringify({ id: "typhoon" }),
+    body: JSON.stringify({ id: scenario }),
   });
   console.log("scenario reset", reset.status);
-  const started = await api("POST", `/ai/assistants/tests/test-suites/${SUITE}/runs`, {});
+  const started = await api("POST", `/ai/assistants/tests/test-suites/${suite}/runs`, {});
   console.log("suite run", JSON.stringify(started).slice(0, 300));
-  const tests = (await api("GET", `/ai/assistants/tests?page%5Bsize%5D=100`)).filter?.((x) => x.test_suite === SUITE) ?? [];
+  const tests = (await api("GET", `/ai/assistants/tests?page%5Bsize%5D=100`)).filter?.((x) => x.test_suite === suite) ?? [];
   const deadline = Date.now() + 12 * 60_000;
   let rows = [];
   while (Date.now() < deadline) {
@@ -146,3 +160,5 @@ async function run() {
 const mode = process.argv[2] ?? "all";
 if (mode === "create" || mode === "all") await create();
 if (mode === "run" || mode === "all") await run();
+// The normal-day suite (the voluntary cancel): node scripts/tests.mjs normal
+if (mode === "normal" || mode === "all") await run("disruption-desk-normal", "normal");
