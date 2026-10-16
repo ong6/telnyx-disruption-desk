@@ -131,6 +131,15 @@ async function run(suite = SUITE, scenario = "typhoon") {
     body: JSON.stringify({ id: scenario }),
   });
   console.log("scenario reset", reset.status);
+  // After a reload the SQL database once answered every query in 85-100 s for a minute and a half,
+  // and every test failed on a booking-system timeout. Start only once a read is quick again.
+  for (let i = 0; i < 24; i++) {
+    const t0 = Date.now();
+    const ok = await fetch("https://desk-pss-0c8faf8c-0.telnyxcompute.com/v1/bookings/K7Q2ZX", { headers: { authorization: `Bearer ${process.env.PSS_API_KEY}` }, signal: AbortSignal.timeout(5_000) }).then((r) => r.ok).catch(() => false);
+    if (ok && Date.now() - t0 < 2_000) break;
+    console.log("reservation system slow after the reset, waiting");
+    await new Promise((r) => setTimeout(r, 5_000));
+  }
   const started = await api("POST", `/ai/assistants/tests/test-suites/${suite}/runs`, {});
   console.log("suite run", JSON.stringify(started).slice(0, 300));
   const tests = (await api("GET", `/ai/assistants/tests?page%5Bsize%5D=100`)).filter?.((x) => x.test_suite === suite) ?? [];
