@@ -71,7 +71,7 @@ button.busy,a.busy{opacity:.55;pointer-events:none}
 </details>
 <h2 style="margin-top:16px">Canary · last 30 minutes</h2><div class="spark" id="spark"></div><div class="mut" id="canarytxt" style="font:12px var(--mono);margin-top:6px"></div>
 <h2 style="margin-top:16px">Latency p50 / p95 (15 min)</h2><table><tbody id="lat"></tbody></table></section>
-<section class="board"><h2>Call log <span class="mut">every call, from Telnyx's conversation history · click one for its transcript</span></h2><table><thead><tr><th>Started</th><th>Channel</th><th>Caller</th><th>Length</th><th>Tools used</th><th>Trace</th></tr></thead><tbody id="log"></tbody></table>
+<section class="board"><h2>Call log <span class="mut">every call, from Telnyx's conversation history · click one for its transcript</span></h2><table><thead><tr><th>Started</th><th>Status</th><th>Outcome</th><th>Channel</th><th>Caller</th><th>Length</th><th>Tools used</th><th>Trace</th></tr></thead><tbody id="log"></tbody></table>
 <h2 style="margin-top:16px">Transcript <span id="txid" class="mut"></span></h2><div id="tx" class="tx mut">Pick a call above.</div></section>
 <section class="side"><h2>Passengers</h2><table><thead><tr><th>Booking</th><th>Pax</th><th>Case</th><th>Detail</th></tr></thead><tbody id="trips"></tbody></table>
 <h2 style="margin-top:16px">Human callback queue</h2><table><tbody id="cbs"></tbody></table></section>
@@ -144,7 +144,7 @@ let LOG=[],TXSEL='';
 const txLines=(lines,n)=>(n?lines.slice(-n):lines).map(l=>'<div class="'+l.who+'">'+(l.who==='caller'?'Caller: ':l.who==='desk'?'Desk: ':'')+esc(l.text)+'</div>').join('');
 const mins=ms=>{const s=Math.max(0,Math.round(ms/1000));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
 async function loadLog(){if(!KEY)return;try{const r=await (await fetch('/api/calllog?limit=50',{cache:'no-store',headers:{authorization:'Bearer '+KEY}})).json();LOG=r.calls||[];
-$('log').innerHTML=LOG.map(c=>'<tr data-id="'+esc(c.id)+'" class="'+(c.id===TXSEL?'sel':'')+'" onclick="showTx(this.dataset.id)"><td>'+new Date(c.at).toLocaleTimeString()+' <span class="mut">'+ago(c.at)+'</span></td><td>'+esc(c.channel)+(c.desk!=='Disruption Desk'?' · '+esc(c.desk):'')+'</td><td>'+esc(c.caller||'—')+'</td><td>'+mins(c.last-c.at)+'</td><td class="mut trunc" title="'+esc(c.tools.join(', '))+'">'+esc(c.tools.join(', ')||'—')+'</td><td>'+(c.trace?'<a data-tid="'+esc(c.trace)+'" onclick="event.stopPropagation();showTrace(this.dataset.tid)">'+esc(c.trace)+'</a>':'')+'</td></tr>').join('')||'<tr><td class="mut" colspan=6>no calls yet</td></tr>';
+$('log').innerHTML=LOG.map(c=>'<tr data-id="'+esc(c.id)+'" class="'+(c.id===TXSEL?'sel':'')+'" onclick="showTx(this.dataset.id)"><td>'+new Date(c.at).toLocaleTimeString()+' <span class="mut">'+ago(c.at)+'</span></td><td>'+(c.status==='live'?'<span class="pill ok">LIVE</span>':'<span class="mut">ended</span>')+'</td><td>'+esc(c.outcome)+'</td><td>'+esc(c.channel)+(c.desk!=='Disruption Desk'?' · '+esc(c.desk):'')+'</td><td>'+esc(c.caller||'—')+'</td><td>'+mins(c.last-c.at)+'</td><td class="mut trunc" title="'+esc(c.tools.join(', '))+'">'+esc(c.tools.join(', ')||'—')+'</td><td>'+(c.trace?'<a data-tid="'+esc(c.trace)+'" onclick="event.stopPropagation();showTrace(this.dataset.tid)">'+esc(c.trace)+'</a>':'')+'</td></tr>').join('')||'<tr><td class="mut" colspan=8>no calls yet</td></tr>';
 if(TXSEL)showTx(TXSEL,true)}catch(e){}}
 async function showTx(id,quiet){TXSEL=id;if(!quiet)loadLog();const c=LOG.find(x=>x.id===id);$('txid').textContent=c?new Date(c.at).toLocaleString()+' · '+c.channel:id;
 const r=await fetch('/api/calllog/'+encodeURIComponent(id),{headers:{authorization:'Bearer '+KEY}}).then(x=>x.json()).catch(()=>null);const box=$('tx');const atEnd=box.scrollTop+box.clientHeight>=box.scrollHeight-8;
@@ -153,7 +153,7 @@ box.innerHTML=txLines((r&&r.lines)||[])||'<div class="mut">no messages</div>';bo
 // panel shows the whole call (what was said and every tool), not only the spans that joined its trace.
 async function tickLive(){
   const box=$('live');if(!box)return;
-  const actives=LOG.filter(c=>Date.now()-c.last<45000).slice(0,4);
+  const actives=LOG.filter(c=>c.status==='live').slice(0,4);
   if(!actives.length){box.innerHTML='<div class="mut" style="font:12px var(--mono)">No live calls — start one with the widget above, the phone line, or the influx button. Finished calls stay in the call log below.</div>';$('livepills').textContent='';return}
   $('livepills').textContent=actives.length+' active · updates every 3 s';
   const solo=actives.length===1;
@@ -164,9 +164,21 @@ async function tickLive(){
   }));
   box.innerHTML=panels.join('');
 }
-async function showTrace(id){$('tid').textContent=id;const r=await (await fetch('/api/trace/'+encodeURIComponent(id),{headers:{authorization:'Bearer '+KEY}})).json();const sp=r.spans||[];if(!sp.length){$('trace').textContent='no spans yet';return}
-const t0=Math.min(...sp.map(x=>x.at-x.ms)),t1=Math.max(...sp.map(x=>x.at)),W=Math.max(1,t1-t0);
-$('trace').innerHTML=sp.map(x=>{const l=100*(x.at-x.ms-t0)/W,w=Math.max(.6,100*x.ms/W);const cls=x.outcome==='error'?'error':x.outcome==='hit'?'hit':'';return '<div class="wf"><i class="'+cls+'" style="left:'+l+'%;width:'+w+'%"></i><span>+'+(x.at-x.ms-t0)+'ms '+esc(x.svc)+' '+esc(x.op)+' · '+esc(x.outcome)+' · '+x.ms+'ms '+esc(x.detail||'')+'</span></div>'}).join('')}
+// One call's timeline: our spans for this trace (webhook, reservation system) merged with every
+// tool call and result from Telnyx's record of the conversation, which carries the same trace id.
+// Tool spans from desk-mcp often sit under per-turn traces (DEBUGLOG #27), so Telnyx's record is
+// what makes the timeline whole.
+async function showTrace(id){$('tid').textContent=id;$('trace').textContent='loading…';
+const H={headers:{authorization:'Bearer '+KEY}};
+const [r,lg]=await Promise.all([fetch('/api/trace/'+encodeURIComponent(id),H).then(x=>x.json()).catch(()=>({})),fetch('/api/calllog?limit=1&trace='+encodeURIComponent(id),H).then(x=>x.json()).catch(()=>({}))]);
+const sp=(r&&r.spans)||[];const conv=((lg&&lg.calls)||[])[0];
+const tx=conv?((await fetch('/api/calllog/'+encodeURIComponent(conv.id),H).then(x=>x.json()).catch(()=>({}))).lines||[]):[];
+const rows=sp.map(x=>({t:x.at-(x.ms||0),ms:x.ms||0,span:x})).concat(tx.filter(l=>l.who!=='system').map(l=>({t:l.at,ms:0,line:l})));
+if(!rows.length){$('trace').textContent='no spans or messages for this trace yet';return}
+rows.sort((a,b)=>a.t-b.t);const t0=Math.min(...rows.map(x=>x.t)),t1=Math.max(...rows.map(x=>x.t+x.ms)),W=Math.max(1,t1-t0);
+const off=t=>{const d=t-t0;return d<10000?'+'+d+'ms':'+'+(d/1000).toFixed(1)+'s'};
+$('trace').innerHTML=(conv?'<div class="mut" style="margin-bottom:6px">'+esc(conv.channel)+' · '+esc(conv.status)+' · '+esc(conv.outcome)+' · '+mins(conv.last-conv.at)+' · spans from our services, tool calls and words from the Telnyx record</div>':'')+rows.map(x=>{if(x.span){const s2=x.span;const l=100*(x.t-t0)/W,w=Math.max(.6,100*x.ms/W);const cls=s2.outcome==='error'?'error':s2.outcome==='hit'?'hit':'';return '<div class="wf"><i class="'+cls+'" style="left:'+l+'%;width:'+w+'%"></i><span>'+off(x.t)+' '+esc(s2.svc)+' '+esc(s2.op)+' · '+esc(s2.outcome)+' · '+s2.ms+'ms '+esc(s2.detail||'')+'</span></div>'}
+const L=x.line;return '<div class="tx" style="border:0;padding:1px 0;background:none;max-height:none"><div class="'+L.who+'">'+off(x.t)+' '+(L.who==='caller'?'Caller: ':L.who==='desk'?'Desk: ':'')+esc(L.text)+'</div></div>'}).join('')}
 async function load(){try{const t0=Date.now();const s=await (await fetch('/api/state',{cache:'no-store',headers:{authorization:'Bearer '+KEY}})).json();s.stateMs=Date.now()-t0;render(s);renderCbs(s);renderSurge(s);renderLock();await loadLog();tickLive()}catch(e){}}
 load();setInterval(load,3000);
 </script></body></html>`;

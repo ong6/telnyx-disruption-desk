@@ -17,6 +17,10 @@ export interface CallLogRow {
   caller: string;
   desk: string;
   tools: string[];
+  /** live while a message arrived in the last 45 s, else ended. */
+  status: "live" | "ended";
+  /** What the call achieved, from the tools it called. */
+  outcome: string;
 }
 export interface CallLogLine {
   at: number;
@@ -40,14 +44,22 @@ async function telnyx(path: string): Promise<any[]> {
   return Array.isArray(body.data) ? body.data : [];
 }
 
-/** The last `limit` conversations of the desk's assistants (main and Mandarin), newest first. */
-export async function callLog(env: any, limit = 50): Promise<CallLogRow[]> {
-  return cached(`log:${limit}`, 3_000, async () => {
+const OUTCOMES: [string, string][] = [
+  ["confirm_rebooking", "rebooked"], ["request_refund", "refunded"], ["cancel_booking", "cancelled"], ["join_waitlist", "waitlisted"],
+  ["request_callback", "callback"], ["check_human_queue", "to a person"], ["hold_seats", "held, not confirmed"],
+];
+const outcomeOf = (tools: string[]) => OUTCOMES.find(([t]) => tools.includes(t))?.[1] ?? (tools.length ? "no change" : "no tools");
+
+/** The last `limit` conversations of the desk's assistants (main and Mandarin), newest first; or the one with this trace id. */
+export async function callLog(env: any, limit = 50, trace = ""): Promise<CallLogRow[]> {
+  if (trace && !/^[A-Za-z0-9-]+$/.test(trace)) return [];
+  return cached(`log:${limit}:${trace}`, 3_000, async () => {
     const ids = (await readSetting<string[]>(env, "assistants")) ?? [];
     const names = ["Disruption Desk", "Mandarin Desk"];
+    const byTrace = trace ? `&metadata->trace_id=eq.${encodeURIComponent(trace)}` : "";
     const lists = await Promise.all(
       ids.map((id, i) =>
-        telnyx(`/ai/conversations?metadata->assistant_id=eq.${encodeURIComponent(id)}&order=created_at.desc&limit=${limit}`).then((cs) => cs.map((c) => ({ c, desk: names[i] ?? "desk" }))),
+        telnyx(`/ai/conversations?metadata->assistant_id=eq.${encodeURIComponent(id)}${byTrace}&order=created_at.desc&limit=${limit}`).then((cs) => cs.map((c) => ({ c, desk: names[i] ?? "desk" }))),
       ),
     );
     return lists
@@ -56,16 +68,20 @@ export async function callLog(env: any, limit = 50): Promise<CallLogRow[]> {
         const m = c.metadata ?? {};
         const from = String(m.telnyx_end_user_target ?? m.from ?? "");
         const channel: CallLogRow["channel"] = m.telnyx_conversation_channel === "web_chat" ? "chat" : from.startsWith("+") ? "phone" : "web";
+        const tools: string[] = Array.isArray(m.called_tools) ? m.called_tools : [];
+        const last = Date.parse(c.last_message_at ?? c.created_at);
         return {
           id: c.id,
           trace: String(m.trace_id ?? ""),
           at: Date.parse(c.created_at),
-          last: Date.parse(c.last_message_at ?? c.created_at),
+          last,
           channel,
           caller: from.startsWith("+") ? maskPhone(from) : "",
           desk,
-          tools: Array.isArray(m.called_tools) ? m.called_tools : [],
-        };
+          tools,
+          status: Date.now() - last < 45_000 ? "live" : "ended",
+          outcome: outcomeOf(tools),
+        } as CallLogRow;
       })
       .sort((a, b) => b.at - a.at)
       .slice(0, limit);
@@ -76,7 +92,7 @@ export async function callLog(env: any, limit = 50): Promise<CallLogRow[]> {
 export async function callTranscript(id: string): Promise<CallLogLine[]> {
   if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error("bad id");
   return cached(`tx:${id}`, 2_000, async () => {
-    const msgs = (await telnyx(`/ai/conversations/${id}/messages?page%5Bsize%5D=200`)).slice().reverse();
+    const msgs = (await telnyx(`/ai/conversations/${id}/messages?page%5Bsize%5D=100`)).slice().reverse();
     const lines: CallLogLine[] = [];
     for (const m of msgs) {
       const at = Date.parse(m.sent_at ?? m.created_at ?? "") || 0;

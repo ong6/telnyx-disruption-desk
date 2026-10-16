@@ -57,7 +57,7 @@ export default {
 
       if (!isAdmin(req, url)) return json({ error: "admin token required" }, 401);
       // The call log carries what callers said (booking codes, names): operator only.
-      if (path === "/api/calllog") return json({ calls: await callLog(env, Math.min(Number(url.searchParams.get("limit") ?? 50), 200)) });
+      if (path === "/api/calllog") return json({ calls: await callLog(env, Math.min(Number(url.searchParams.get("limit") ?? 50), 200), url.searchParams.get("trace") ?? "") });
       if (path.startsWith("/api/calllog/")) return json({ lines: await callTranscript(path.split("/")[3]) });
       const body: any = req.method === "POST" ? await req.json().catch(() => ({})) : {};
       if (path === "/api/scenario" && req.method === "POST") return json(await loadScenario(env, body.id ?? "normal", log));
