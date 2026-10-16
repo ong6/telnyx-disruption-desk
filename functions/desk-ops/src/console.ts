@@ -42,6 +42,9 @@ button:hover{border-color:var(--amber)}button.danger{border-color:#5a2a27}input{
 .tl b{color:var(--ink);font-weight:600}
 .tl.err{color:var(--red)}.tl.hit{color:var(--green)}
 button.busy,a.busy{opacity:.55;pointer-events:none}
+.tx{font:12px var(--mono);max-height:420px;overflow:auto;background:#10141a;border:1px solid var(--line);border-radius:4px;padding:10px 12px}
+.tx div{white-space:pre-wrap;margin:2px 0}.tx .caller{color:#7cc4ff}.tx .desk{color:var(--ink)}.tx .tool{color:var(--dim)}.tx .system{color:var(--dim);font-style:italic}
+#log tr{cursor:pointer}#log tr.sel td{background:#1a2230}
 #busy{display:none}
 @media (max-width:900px){.board,.side{grid-column:span 12}main{padding:12px}header{padding:12px}}
 </style></head><body>
@@ -67,10 +70,11 @@ button.busy,a.busy{opacity:.55;pointer-events:none}
 </details>
 <h2 style="margin-top:16px">Canary · last 30 minutes</h2><div class="spark" id="spark"></div><div class="mut" id="canarytxt" style="font:12px var(--mono);margin-top:6px"></div>
 <h2 style="margin-top:16px">Latency p50 / p95 (15 min)</h2><table><tbody id="lat"></tbody></table></section>
-<section class="board"><h2>Recent calls</h2><table><thead><tr><th>Trace</th><th>Started</th><th>Caller</th><th>Booking</th><th>Last step</th><th>Outcome</th></tr></thead><tbody id="calls"></tbody></table></section>
+<section class="board"><h2>Call log <span class="mut">every call, from Telnyx's conversation history · click one for its transcript</span></h2><table><thead><tr><th>Started</th><th>Channel</th><th>Caller</th><th>Length</th><th>Tools used</th><th>Trace</th></tr></thead><tbody id="log"></tbody></table>
+<h2 style="margin-top:16px">Transcript <span id="txid" class="mut"></span></h2><div id="tx" class="tx mut">Pick a call above.</div></section>
 <section class="side"><h2>Passengers</h2><table><thead><tr><th>Booking</th><th>Pax</th><th>Case</th><th>Detail</th></tr></thead><tbody id="trips"></tbody></table>
 <h2 style="margin-top:16px">Human callback queue</h2><table><tbody id="cbs"></tbody></table></section>
-<section class="wide"><h2>Trace <span id="tid" class="mut"></span></h2><div id="trace" class="mut">Click a trace id to see one call's path: assistant → webhook → KV / actor → MCP → reservation system.</div></section>
+<section class="wide"><h2>Trace <span id="tid" class="mut"></span></h2><div id="trace" class="mut">Click a trace id to see one call's path: assistant → webhook → actors → MCP → reservation system.</div></section>
 </main><div id="toast"></div>
 <script async src="https://unpkg.com/@telnyx/ai-agent-widget@0.36.0"></script>
 <script>
@@ -126,7 +130,7 @@ const k=[['Calls (15 min)',calls],['Rebooked',(s.metrics&&sum(s.metrics.counts||
 $('kpis').innerHTML=k.map(([l,v])=>'<div class="kpi"><b'+(l.startsWith('Tool errors')&&v>0?' style="color:var(--red)"':'')+'>'+v+'</b><span>'+l+'</span></div>').join('');
 $('flights').innerHTML=s.flights.map(x=>{const pct=x.capacity?Math.round(100*(x.capacity-x.seatsLeft)/x.capacity):0;return '<tr><td>'+x.number+'</td><td>'+x.date.slice(5)+'</td><td>'+x.dep+'</td><td class="'+x.status+'">'+x.status.toUpperCase()+'</td><td>'+x.seatsLeft+'</td><td>'+x.held+'</td><td>'+x.waitlist+'</td><td><div class="bar"><i style="width:'+pct+'%"></i></div></td><td>'+(x.status!=='cancelled'&&KEY?'<a title="simulate another passenger freeing a seat" onclick="act(\\'/api/release\\',{flightId:\\''+x.id+'\\',seats:1},this)">free 1</a>':'')+'</td></tr>'}).join('');
 $('lat').innerHTML=Object.entries((s.metrics&&s.metrics.latency)||{}).sort().map(([k,v])=>'<tr><td>'+esc(k)+'</td><td>'+v.p50+' / '+v.p95+' ms</td><td class="mut">n='+v.n+'</td></tr>').join('')||'<tr><td class="mut">no traffic yet</td></tr>';
-$('calls').innerHTML=((s.metrics&&s.metrics.calls)||[]).map(r=>'<tr><td><a data-tid="'+esc(r.trace)+'" onclick="showTrace(this.dataset.tid)">'+esc(r.trace)+'</a></td><td>'+ago(r.at)+'</td><td>'+esc(r.caller||'web')+'</td><td>'+esc(r.booking||'—')+'</td><td>'+esc(r.last)+'</td><td>'+esc(r.outcome)+'</td></tr>').join('')||'<tr><td class="mut" colspan=6>no calls yet</td></tr>';
+
 $('trips').innerHTML=(s.trips||[]).map(t=>{const d=t.rebookedTo?t.rebookedTo.flightId+' · '+t.rebookedTo.confirmation:t.hold&&t.hold.expiresAt>Date.now()?'holding '+t.hold.flightId+' · '+Math.round((t.hold.expiresAt-Date.now())/1000)+'s':t.refund?t.refund.reference:t.waitlist?'waitlist '+t.waitlist.flightId+(t.callback?' · callback '+(t.callback.placedAt?'placed '+esc(t.callback.result):'due'):''):'';return '<tr><td>'+esc(t.code)+'</td><td>'+t.pax+'</td><td>'+esc(t.status)+'</td><td class="mut trunc" title="'+esc(d)+'">'+esc(d)+'</td></tr>'}).join('');}
 function renderLock(){
   document.querySelectorAll('.op').forEach(e=>{e.style.display=KEY?'':'none'});
@@ -135,27 +139,33 @@ function renderLock(){
 function renderSurge(s){const g=s.surge;if(!g||g.total==null){return}const pct=g.total?Math.round(100*g.done/g.total):0;const el=((g.finishedAt||Date.now())-g.startedAt)/1000;
 $('surgebox').innerHTML=(g.running?'Surge running':'Last surge')+': '+g.done+' / '+g.total+' passengers in '+el.toFixed(0)+' s ('+(g.done/Math.max(1,el)).toFixed(1)+'/s)'+'<div class="prog"><i style="width:'+pct+'%"></i></div><div class="surge"><div><b>'+g.rebooked+'</b><span>rebooked</span></div><div><b>'+g.waitlisted+'</b><span>waitlisted + callback</span></div><div><b>'+g.raceLost+'</b><span>seat races lost, retried</span></div><div><b>'+g.errors+'</b><span>errors</span></div><div><b>'+g.p50+' / '+g.p95+'</b><span>ms per passenger p50 / p95</span></div></div>'}
 function renderCbs(s){$('cbs').innerHTML=(s.callbacks||[]).map(c=>'<tr><td>'+ago(c.at)+'</td><td>'+esc(c.booking||c.caller||'unknown')+'</td><td class="mut trunc" title="'+esc(c.reason)+'">'+esc(c.reason)+'</td><td><a data-tid="'+esc(c.trace)+'" onclick="showTrace(this.dataset.tid)">trace</a></td></tr>').join('')||'<tr><td class="mut">empty</td></tr>'}
-let liveCache={};
+let LOG=[],TXSEL='';
+const txLines=(lines,n)=>(n?lines.slice(-n):lines).map(l=>'<div class="'+l.who+'">'+(l.who==='caller'?'Caller: ':l.who==='desk'?'Desk: ':'')+esc(l.text)+'</div>').join('');
+const mins=ms=>{const s=Math.max(0,Math.round(ms/1000));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
+async function loadLog(){if(!KEY)return;try{const r=await (await fetch('/api/calllog?limit=50',{cache:'no-store',headers:{authorization:'Bearer '+KEY}})).json();LOG=r.calls||[];
+$('log').innerHTML=LOG.map(c=>'<tr data-id="'+esc(c.id)+'" class="'+(c.id===TXSEL?'sel':'')+'" onclick="showTx(this.dataset.id)"><td>'+new Date(c.at).toLocaleTimeString()+' <span class="mut">'+ago(c.at)+'</span></td><td>'+esc(c.channel)+(c.desk!=='Disruption Desk'?' · '+esc(c.desk):'')+'</td><td>'+esc(c.caller||'—')+'</td><td>'+mins(c.last-c.at)+'</td><td class="mut trunc" title="'+esc(c.tools.join(', '))+'">'+esc(c.tools.join(', ')||'—')+'</td><td>'+(c.trace?'<a data-tid="'+esc(c.trace)+'" onclick="event.stopPropagation();showTrace(this.dataset.tid)">'+esc(c.trace)+'</a>':'')+'</td></tr>').join('')||'<tr><td class="mut" colspan=6>no calls yet</td></tr>';
+if(TXSEL)showTx(TXSEL,true)}catch(e){}}
+async function showTx(id,quiet){TXSEL=id;if(!quiet)loadLog();const c=LOG.find(x=>x.id===id);$('txid').textContent=c?new Date(c.at).toLocaleString()+' · '+c.channel:id;
+const r=await fetch('/api/calllog/'+encodeURIComponent(id),{headers:{authorization:'Bearer '+KEY}}).then(x=>x.json()).catch(()=>null);const box=$('tx');const atEnd=box.scrollTop+box.clientHeight>=box.scrollHeight-8;
+box.innerHTML=txLines((r&&r.lines)||[])||'<div class="mut">no messages</div>';box.classList.remove('mut');if(atEnd||!quiet)box.scrollTop=quiet?box.scrollHeight:0}
+// Live: a conversation with a message in the last 45 s. Its transcript comes from Telnyx, so the
+// panel shows the whole call (what was said and every tool), not only the spans that joined its trace.
 async function tickLive(){
   const box=$('live');if(!box)return;
-  const calls=(S&&S.metrics&&S.metrics.calls)||[];
-  const actives=calls.filter(c=>(!c.outcome||c.outcome==='in_progress')&&Date.now()-c.at<300000).slice(0,4);
-  if(!actives.length){box.innerHTML='<div class="mut" style="font:12px var(--mono)">No live calls — start one with the widget above, the phone line, or the influx button.</div>';liveCache={};$('livepills').textContent='';return}
+  const actives=LOG.filter(c=>Date.now()-c.last<45000).slice(0,4);
+  if(!actives.length){box.innerHTML='<div class="mut" style="font:12px var(--mono)">No live calls — start one with the widget above, the phone line, or the influx button. Finished calls stay in the call log below.</div>';$('livepills').textContent='';return}
   $('livepills').textContent=actives.length+' active · updates every 3 s';
   const solo=actives.length===1;
   const panels=await Promise.all(actives.map(async c=>{
-    const r=await fetch('/api/trace/'+encodeURIComponent(c.trace),{headers:{authorization:'Bearer '+KEY}}).then(x=>x.json()).catch(()=>null);
-    const spans=(r&&r.spans)||[];
-    liveCache[c.trace]=spans;
-    const t0=spans.length?Math.min(...spans.map(x=>x.at-(x.ms||0))):0;
-    const lines=spans.slice(-(solo?14:6)).map(x=>{const cls=x.outcome==='error'?'err':x.outcome==='hit'?'hit':'';return '<div class="tl '+cls+'">+'+Math.max(0,(x.at-(x.ms||0))-t0)+'ms <b>'+esc(x.svc)+' '+esc(x.op)+'</b> · '+esc(x.outcome)+(x.detail?' · '+esc(x.detail):'')+'</div>'}).join('')||'<div class="tl mut">waiting for the first span…</div>';
-    return '<div class="live'+(solo?' solo':'')+'"><div class="hd"><span class="pill ok">LIVE</span><a data-tid="'+esc(c.trace)+'" onclick="showTrace(this.dataset.tid)">'+esc(c.trace)+'</a><span class="pill">'+esc(c.booking||'web')+'</span><span class="mut">'+esc(c.caller||'')+'</span><span class="mut">'+esc(c.last||'')+'</span></div><div style="margin-top:8px">'+lines+'</div></div>';
+    const r=await fetch('/api/calllog/'+encodeURIComponent(c.id),{headers:{authorization:'Bearer '+KEY}}).then(x=>x.json()).catch(()=>null);
+    const lines=txLines((r&&r.lines)||[],solo?16:6)||'<div class="mut">waiting for the first words…</div>';
+    return '<div class="live'+(solo?' solo':'')+'"><div class="hd"><span class="pill ok">LIVE</span><span class="pill">'+esc(c.channel)+'</span><span class="mut">'+esc(c.caller||'')+'</span><span class="mut">'+mins(Date.now()-c.at)+'</span>'+(c.trace?'<a data-tid="'+esc(c.trace)+'" onclick="showTrace(this.dataset.tid)">'+esc(c.trace)+'</a>':'')+'<a data-id="'+esc(c.id)+'" onclick="showTx(this.dataset.id)">full transcript</a></div><div class="tx" style="margin-top:8px;max-height:none;border:0;padding:0">'+lines+'</div></div>';
   }));
   box.innerHTML=panels.join('');
 }
 async function showTrace(id){$('tid').textContent=id;const r=await (await fetch('/api/trace/'+encodeURIComponent(id),{headers:{authorization:'Bearer '+KEY}})).json();const sp=r.spans||[];if(!sp.length){$('trace').textContent='no spans yet';return}
 const t0=Math.min(...sp.map(x=>x.at-x.ms)),t1=Math.max(...sp.map(x=>x.at)),W=Math.max(1,t1-t0);
 $('trace').innerHTML=sp.map(x=>{const l=100*(x.at-x.ms-t0)/W,w=Math.max(.6,100*x.ms/W);const cls=x.outcome==='error'?'error':x.outcome==='hit'?'hit':'';return '<div class="wf"><i class="'+cls+'" style="left:'+l+'%;width:'+w+'%"></i><span>+'+(x.at-x.ms-t0)+'ms '+esc(x.svc)+' '+esc(x.op)+' · '+esc(x.outcome)+' · '+x.ms+'ms '+esc(x.detail||'')+'</span></div>'}).join('')}
-async function load(){try{const t0=Date.now();const s=await (await fetch('/api/state',{cache:'no-store',headers:{authorization:'Bearer '+KEY}})).json();s.stateMs=Date.now()-t0;render(s);renderCbs(s);renderSurge(s);renderLock();tickLive()}catch(e){}}
+async function load(){try{const t0=Date.now();const s=await (await fetch('/api/state',{cache:'no-store',headers:{authorization:'Bearer '+KEY}})).json();s.stateMs=Date.now()-t0;render(s);renderCbs(s);renderSurge(s);renderLock();await loadLog();tickLive()}catch(e){}}
 load();setInterval(load,3000);
 </script></body></html>`;

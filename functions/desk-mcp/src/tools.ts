@@ -98,7 +98,7 @@ async function caseSummary(ctx: ToolCtx, b: PssBooking) {
     original_flight_status: orig?.status ?? "unknown",
     case_status: t?.status ?? "none",
     held_seat: hold ? { flight_id: hold.flightId, minutes_left: Math.max(1, Math.round((hold.expiresAt - Date.now()) / 60000)) } : null,
-    rebooked: b.confirmation ? { flight: `${b.new_flight} on ${b.new_date}`, confirmation_code: b.confirmation, spelled: spell(b.confirmation) } : null,
+    rebooked: b.confirmation ? { flight: `${b.new_flight} on ${b.new_date}`, booking_code: b.code, spelled: spell(b.code) } : null,
     refund_reference: b.status === "refunded" ? b.refund_ref : null,
     cancellation_refund_reference: b.status === "cancelled" ? b.refund_ref : null,
     waitlisted_for: t?.status === "waitlisted" ? t.waitlist?.flightId : null,
@@ -238,7 +238,7 @@ export const TOOLS: Record<string, Tool> = {
   },
 
   confirm_rebooking: {
-    description: "Confirm the held seats after the caller clearly says yes. Returns the new confirmation code; read it back letter by letter.",
+    description: "Confirm the held seats after the caller clearly says yes. The booking keeps its booking code; read it back letter by letter.",
     inputSchema: { type: "object", properties: {} },
     async run(ctx) {
       const b = await requireBooking(ctx);
@@ -246,7 +246,7 @@ export const TOOLS: Record<string, Tool> = {
       if (!t?.hold) {
         // The same confirm delivered twice (DEBUGLOG #22) gets the same answer, not "no hold".
         if (t?.rebookedTo && b.confirmation === t.rebookedTo.confirmation && recently(t, "rebooked"))
-          return { confirmed: true, confirmation_code: b.confirmation, spelled: spell(b.confirmation), say: `You're confirmed. Your new confirmation code is ${spell(b.confirmation)}.` };
+          return { confirmed: true, booking_code: b.code, spelled: spell(b.code), say: `You're confirmed. Your booking code stays the same: ${spell(b.code)}.` };
         return { confirmed: false, reason: "no_hold", next: "hold a flight first" };
       }
       const r = await flight(ctx, t.hold.flightId).confirm(t.hold.holdId, b.code);
@@ -254,7 +254,8 @@ export const TOOLS: Record<string, Tool> = {
       const target: FlightSnapshot = await flight(ctx, t.hold.flightId).snapshot();
       const orig = await pss(ctx.env, ctx.claims.trace, ctx.log).flight(b.flight, b.date);
       const fee = changeFee(orig ?? { status: "scheduled", origin: target.from, dest: target.to }, (await readConfigFast(ctx.env, 300))?.scenario?.id);
-      const confirmation = newCode(6);
+      // A change keeps the booking code, as airlines keep the record locator: the caller has one code.
+      const confirmation = b.code;
       let ticketing = "issued";
       try {
         await pss(ctx.env, ctx.claims.trace, ctx.log).rebook(b.code, { flight: target.number, date: target.date, confirmation, fee: fee.amount });
@@ -267,10 +268,10 @@ export const TOOLS: Record<string, Tool> = {
       if (origId !== target.id) await flight(ctx, origId).returnSeats(b.code, b.pax).catch(() => {});
       await trip(ctx, b.code).rebooked(target.id, confirmation);
       const receipt = { confirmation, booking: b.code, passenger: `${b.first_name} ${b.last_name}`, pax: b.pax, flight: target, change_fee_sgd: fee.amount, fee_waived_by: fee.waivedBy, ticketing, at: new Date().toISOString(), trace: ctx.claims.trace };
-      ctx.env.DOCS?.put(`receipts/${confirmation}.json`, JSON.stringify(receipt, null, 2), { httpMetadata: { contentType: "application/json" } }).catch(() => {});
+      ctx.env.DOCS?.put(`receipts/${b.code}-${Date.now()}.json`, JSON.stringify(receipt, null, 2), { httpMetadata: { contentType: "application/json" } }).catch(() => {});
       return {
-        confirmed: true, confirmation_code: confirmation, spelled: spell(confirmation), flight: describeFlight(target), passengers: b.pax, change_fee_sgd: fee.amount, ticketing,
-        say: `You're confirmed on ${describeFlight(target)}. Your new confirmation code is ${spell(confirmation)}.${fee.amount ? ` The ${fee.amount} Singapore dollar change fee goes on the card you booked with.` : " There's no charge for the change."}`,
+        confirmed: true, booking_code: b.code, spelled: spell(b.code), flight: describeFlight(target), passengers: b.pax, change_fee_sgd: fee.amount, ticketing,
+        say: `You're confirmed on ${describeFlight(target)}. Your booking code stays the same: ${spell(b.code)}.${fee.amount ? ` The ${fee.amount} Singapore dollar change fee goes on the card you booked with.` : " There's no charge for the change."}`,
       };
     },
   },

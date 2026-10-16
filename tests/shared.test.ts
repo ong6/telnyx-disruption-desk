@@ -124,7 +124,7 @@ test("openingOffer always ends with the choices, worded for what we know", async
   assert.equal(openingOffer({}), OFFER_ANYONE);
   assert.match(openingOffer({ name: "Jun", city: "Hong Kong", status: "cancelled" }), /^Hi Jun\. Your flight to Hong Kong is cancelled\. I can rebook you .* for free, cancel it for a full refund, or connect you with a person/);
   assert.match(openingOffer({ name: "Daniel", city: "Tokyo Narita", status: "scheduled" }), /rebook or cancel your flight to Tokyo Narita, or connect you with a person/);
-  assert.match(openingOffer({ name: "Jun", rebooked: "Kilo, two" }), /already rebooked, and your confirmation code is Kilo, two/);
+  assert.match(openingOffer({ name: "Jun", rebooked: "Kilo, two" }), /already rebooked, under the same booking code, Kilo, two/);
   assert.match(openingOffer({ name: "Jun", hold: "NB862-2026-10-13" }), /seat on hold/);
 });
 

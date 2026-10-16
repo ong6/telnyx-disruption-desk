@@ -42,7 +42,7 @@ export function openingOffer(o: { name?: string; city?: string; status?: string;
   const hi = `Hi ${o.name}.`;
   if (o.seatOffered) return `${hi} We're calling back because a seat has opened up for you, and it's on hold. Would you like me to confirm it, or would you rather speak to a person?`;
   if (o.hold) return `${hi} You have a seat on hold for your new flight. Would you like me to confirm it, choose another flight, or connect you with a person?`;
-  if (o.rebooked) return `${hi} You're already rebooked, and your confirmation code is ${o.rebooked}. I can change that flight, cancel it, or connect you with a person. What would you like to do?`;
+  if (o.rebooked) return `${hi} You're already rebooked, under the same booking code, ${o.rebooked}. I can change that flight, cancel it, or connect you with a person. What would you like to do?`;
   if (o.status === "cancelled") return `${hi} Your flight to ${o.city} is cancelled. I can rebook you onto another flight for free, cancel it for a full refund, or connect you with a person. What would you like to do?`;
   return `${hi} I can rebook or cancel your flight to ${o.city}, or connect you with a person. What would you like to do?`;
 }

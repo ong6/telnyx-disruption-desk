@@ -3,6 +3,7 @@
 // redeploy, add a relief flight. Also the lab routes for the stampede test.
 export { Canary } from "./canary";
 export { Surge } from "./surge";
+import { callLog, callTranscript } from "./calllog";
 import { readConfig, readConfigFast, readSetting, writeFlags, writeScenario, type Flags, type Scenario } from "../../../shared/config";
 import { URLS } from "../../../shared/endpoints";
 import { makeLogger } from "../../../shared/log";
@@ -55,6 +56,9 @@ export default {
       }
 
       if (!isAdmin(req, url)) return json({ error: "admin token required" }, 401);
+      // The call log carries what callers said (booking codes, names): operator only.
+      if (path === "/api/calllog") return json({ calls: await callLog(env, Math.min(Number(url.searchParams.get("limit") ?? 50), 200)) });
+      if (path.startsWith("/api/calllog/")) return json({ lines: await callTranscript(path.split("/")[3]) });
       const body: any = req.method === "POST" ? await req.json().catch(() => ({})) : {};
       if (path === "/api/scenario" && req.method === "POST") return json(await loadScenario(env, body.id ?? "normal", log));
       if (path === "/api/flags" && req.method === "POST") {

@@ -63,7 +63,7 @@ export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinA
       "Only offer dates and times a tool returned.",
     ]),
     prompt("n_confirm", "Confirm", [
-      "Call confirm_rebooking now, then say its say line: the new flight, the confirmation code read slowly letter by letter, and the change fee. Offer to repeat the code.",
+      "Call confirm_rebooking now, then say its say line: the new flight, that the booking code stays the same (read slowly letter by letter), and the change fee. Offer to repeat the code.",
       "If the hold expired, apologise and call the transition back to rebooking.",
       "Once the caller has the code and needs nothing more on this booking, call the wrap-up transition.",
     ]),
@@ -138,7 +138,7 @@ export function buildFlow({ transferToolId, hangupToolId, queueToolId, mandarinA
   edge("n_rebook", "n_confirm", llm("Seats are held with hold_seats and the caller clearly said yes to confirm them."));
   edge("n_rebook", "n_waitlist", llm("No date or time with seats works for the caller and they want to wait for a seat."));
   edge("n_rebook", "n_cancel", llm("The caller would rather cancel or get a refund than move to another flight."));
-  edge("n_confirm", "n_wrap", llm("The rebooking is confirmed and the caller has the confirmation code."));
+  edge("n_confirm", "n_wrap", llm("The rebooking is confirmed and the caller has heard their booking code."));
   edge("n_confirm", "n_rebook", llm("The hold expired, or the caller wants a different flight after all."));
   edge("n_cancel", "n_refund_rights", llm("Nimbus Air cancelled or delayed the caller's flight, so they are entitled to a full refund."));
   edge("n_cancel", "n_rebook", llm("The caller decides to change their flight instead of cancelling."));

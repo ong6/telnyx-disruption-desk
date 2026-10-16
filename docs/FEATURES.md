@@ -29,7 +29,7 @@ All flights on time. The assistant is a service desk:
   something not in the documents and it says so instead of inventing.
 - **Voluntary changes work, for a fee**: pick a day, then a time, and hear the 100 Singapore
   dollar change fee (one flat fee per booking, whichever flight) before the yes; hold seats,
-  confirm, and hear the new confirmation code read letter by letter.
+  confirm, and hear that the booking code stays the same, read letter by letter.
 - **Voluntary cancels keep the fare as credit**: on an operating flight the fare isn't refunded;
   the assistant explains that, offers a change instead, and on a yes cancels and reads a travel
   credit reference (`CR…`, valid 12 months). The seats go back on sale.

@@ -34,7 +34,7 @@ const TESTS = [
       DATE_THEN_TIME,
       { name: "Free change", criteria: "Says the change is free (waived because of the typhoon or the cancellation) and never asks the caller to pay a change fee." },
       { name: "Holds then confirms", criteria: "Holds seats on the chosen flight, reads back the flight, date, time and passengers, and asks for a clear yes before confirming." },
-      { name: "Code read back", criteria: "Gives a confirmation code and reads it letter by letter." },
+      { name: "Code read back", criteria: "Says the booking code stays the same and reads it letter by letter." },
       NO_INVENTION, PHONE_MANNER,
     ],
   },
@@ -46,7 +46,7 @@ const TESTS = [
       DATE_THEN_TIME,
       { name: "Fee quoted", criteria: "States a change fee of 100 Singapore dollars before asking the caller to confirm, and repeats it in the read-back or the confirmation." },
       { name: "Real flights only", criteria: "Any flight offered is a Nimbus Air flight from Singapore to Tokyo (N B 802, 804 or 806), departing 8:40 AM, 12:20 PM or 3:05 PM." },
-      { name: "Code read back", criteria: "Gives a confirmation code and reads it letter by letter." },
+      { name: "Code read back", criteria: "Says the booking code stays the same and reads it letter by letter." },
     ],
   },
   {
