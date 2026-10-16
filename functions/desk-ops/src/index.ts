@@ -76,6 +76,12 @@ export default {
         return json(await env.CONFIG.idFromName("global").setSettings(values));
       }
       if (path === "/api/demo-passenger" && req.method === "POST") return json(await demoPassenger(env, log));
+      // Web calls act as one of the seeded bookings (Jun's is the default, found by the demo number).
+      if (path === "/api/demo-as" && req.method === "POST") {
+        const b = BOOKINGS.find((x) => x.code === body.code);
+        if (!b) return json({ error: "unknown booking" }, 400);
+        return json(await writeFlags(env, { web_demo_booking: b.phone === "$DEMO_CALLER" ? "" : b.code, web_calls_as_demo_caller: "on" }));
+      }
       if (path === "/api/relief" && req.method === "POST") {
         const { scenario } = await readConfig(env);
         const base = scenario?.baseDate ?? sgDate(0);
