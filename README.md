@@ -11,7 +11,7 @@ database. Nimbus Air is fictional.
 
 **Docs:** the feature tour for the demo is [docs/FEATURES.md](docs/FEATURES.md); the technical
 deep dive is [docs/TECHNICAL.md](docs/TECHNICAL.md); demo-day Q&A prep with one talking point
-per requirement is [docs/QA.md](docs/QA.md).
+per requirement is [docs/QA.md](docs/QA.md); the demo-round slides are in [docs/slides/](docs/slides/README.md).
 
 ## Try it
 

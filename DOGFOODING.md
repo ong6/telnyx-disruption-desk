@@ -2,17 +2,17 @@
 
 ## Who wrote what
 
-This build was made with two AI coding tools, and the line between them is stated plainly:
+This build was made by me with OpenCode on Telnyx-hosted models, and the line is stated plainly:
 
-- **Claude Code** wrote the four edge functions, the workflow definition and the build and test
-  scripts. It also ran the deploys, the live tests and the debugging in [DEBUGLOG.md](DEBUGLOG.md).
+- **I** wrote the four edge functions, the workflow definition and the build and test scripts, and
+  ran the deploys and live tests. Claude Code helped with debugging (see [DEBUGLOG.md](DEBUGLOG.md)).
 - **OpenCode on Telnyx-hosted models**, through the `@telnyx/opencode` plugin, did self-contained
   jobs:
   - the five policy documents the assistant reads aloud (`content/policies/`);
   - the unit tests for the pure modules (`tests/shared.test.ts`);
   - the unit tests for the seat-inventory actor (`tests/flight.test.ts`).
-- **From 2026-10-11 on**, changes go through OpenCode on Telnyx models. Claude Code writes the task
-  and reviews the result. Commits are attributed to OpenCode (`opencode <opencode@opencode.ai>`),
+- **From 2026-10-11 on**, changes go through OpenCode on Telnyx models: I write the task and
+  review the result. Commits are attributed to OpenCode (`opencode <opencode@opencode.ai>`),
   and the trail of what each model wrote lives in this file, since git carries only one identity.
 - **The 10-11 October session ran entirely on OpenCode** (GLM-5.3-Flash): the actor-host crash
   (#14), the booking-overwrite bug (#15), the stateful-session experiment and revert (#16), the
