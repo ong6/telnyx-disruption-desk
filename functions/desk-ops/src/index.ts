@@ -9,7 +9,7 @@ import { URLS } from "../../../shared/endpoints";
 import { makeLogger } from "../../../shared/log";
 import { BOOKINGS, FLIGHTS, INCIDENTS, RELIEF_FLIGHT, SCHEDULE_DAYS } from "../../../shared/seed";
 import type { FlightSnapshot } from "../../../shared/types";
-import { addDays, flightId, maskPhone, sgDate } from "../../../shared/util";
+import { addDays, flightId, maskPhone, newCode, sgDate, spell } from "../../../shared/util";
 import { CONSOLE_HTML } from "./console";
 
 const ROUTES = [["SIN", "HKG"], ["SIN", "NRT"]];
@@ -75,6 +75,7 @@ export default {
         const values = Object.fromEntries(Object.entries(body).filter(([k]) => k === "assistants" || k === "outbound"));
         return json(await env.CONFIG.idFromName("global").setSettings(values));
       }
+      if (path === "/api/demo-passenger" && req.method === "POST") return json(await demoPassenger(env, log));
       if (path === "/api/relief" && req.method === "POST") {
         const { scenario } = await readConfig(env);
         const base = scenario?.baseDate ?? sgDate(0);
@@ -182,11 +183,37 @@ async function loadScenario(env: any, id: string, log: ReturnType<typeof makeLog
   );
   const scenario: Scenario = { id, baseDate, notice: incident?.notice ?? "", cancelled: reset.cancelled ?? [], loadedAt: Date.now() };
   await writeScenario(env, scenario);
-  await writeFlags(env, { disruption_mode: incident ? "on" : "off" });
+  // The reset dropped any demo passenger, so web calls go back to acting as Jun.
+  await writeFlags(env, { disruption_mode: incident ? "on" : "off", web_demo_booking: "" });
   // The data is loaded either way: a failed sync of the assistants' defaults is logged, not a 500.
   await syncAssistantDefaults(env, log).catch((e) => log.error("assistant_defaults", { stage: "sync", err: String(e?.message ?? e).slice(0, 160) }));
   log.info("scenario", { id, baseDate, flights: flights.length, cancelled: scenario.cancelled });
   return { scenario, flights: flights.length, bookings: BOOKINGS.length };
+}
+
+const FIRST = ["Aisha", "Ben", "Chloe", "Darren", "Elena", "Farhan", "Grace", "Hiro", "Isabel", "Kai", "Li Wei", "Maya", "Nikhil", "Olivia", "Priya", "Ryan", "Sofia", "Wei Ming"];
+const LAST = ["Tan", "Lim", "Chen", "Wong", "Kumar", "Lee", "Ng", "Rahman", "Goh", "Nair", "Teo", "Koh"];
+const pick = <T,>(xs: T[]) => xs[Math.floor(Math.random() * xs.length)];
+
+/**
+ * A fresh made-up passenger on a Hong Kong flight, and web calls act as them: the demo can run
+ * again after the last passenger was rebooked or cancelled, without a reset. On a typhoon day
+ * they're on today's cancelled NB866; on a normal day on NB866 today, or tomorrow once today's
+ * has left or is too close to rebook from. The booking carries the demo number, so a callback
+ * reaches the presenter.
+ */
+async function demoPassenger(env: any, log: ReturnType<typeof makeLogger>) {
+  const { scenario } = await readConfig(env, true);
+  const base = scenario?.baseDate ?? sgDate(0);
+  const sgHour = new Date(Date.now() + 8 * 3_600_000).getUTCHours();
+  const day = scenario?.id === "typhoon" || (sgDate(0) === base && sgHour < 11) ? 0 : 1;
+  const date = addDays(sgDate(0) > base ? sgDate(0) : base, day);
+  const p = { code: newCode(6), firstName: pick(FIRST), lastName: pick(LAST), phone: process.env.DEMO_CALLER_NUMBER ?? "", pax: 1, flight: "NB866", tier: "gold" };
+  await pssFetch("/v1/admin/bookings", { method: "POST", body: JSON.stringify({ code: p.code, first_name: p.firstName, last_name: p.lastName, phone: p.phone, pax: p.pax, flight: p.flight, date, tier: p.tier }) });
+  await env.TRIP.idFromName(p.code).init({ ...p, day }, date);
+  await writeFlags(env, { web_demo_booking: p.code, web_calls_as_demo_caller: "on" });
+  log.info("demo_passenger", { code: p.code, flight: `${p.flight}-${date}` });
+  return { code: p.code, spelled: spell(p.code), name: `${p.firstName} ${p.lastName}`, flight: `${p.flight}-${date}` };
 }
 
 async function state(env: any) {
@@ -206,7 +233,8 @@ async function state(env: any) {
     degrade("canary", env.CANARY.idFromName("main").runs()),
     degrade("surge", env.SURGE.idFromName("main").state()),
   ]);
-  const trips = await Promise.all(BOOKINGS.map((b) => degrade("trips", env.TRIP.idFromName(b.code).get())));
+  const codes = [...(flags.web_demo_booking ? [flags.web_demo_booking] : []), ...BOOKINGS.map((b) => b.code)];
+  const trips = await Promise.all(codes.map((c) => degrade("trips", env.TRIP.idFromName(c).get())));
   const callbacks = (((metrics as any)?.callbacks ?? []) as any[]).map((c) => ({ ...c, caller: maskPhone(c.caller) }));
   return {
     now: Date.now(),
@@ -218,7 +246,7 @@ async function state(env: any) {
     scenario,
     flights: ((flights as any[]) ?? []).filter(Boolean).sort((a: any, b: any) => (a.date + a.dep).localeCompare(b.date + b.dep)),
     trips: ((trips as any[]) ?? []).filter(Boolean).map((t: any) => ({
-      code: t.booking.code, name: `${t.booking.firstName} ${t.booking.lastName}`, pax: t.booking.pax, phone: maskPhone(t.booking.phone),
+      code: t.booking.code, name: `${t.booking.firstName} ${t.booking.lastName}`, flight: `${t.booking.flight} ${t.date ?? ""}`.trim(), pax: t.booking.pax, phone: maskPhone(t.booking.phone),
       status: t.status, hold: t.hold, rebookedTo: t.rebookedTo, refund: t.refund, waitlist: t.waitlist, callback: t.callback, calls: t.calls, events: t.events.slice(-4),
     })),
     callbacks,

@@ -69,6 +69,15 @@ async function route(req: Request, url: URL, env: any): Promise<Response> {
     await db.batch(stmts);
     return json({ created: codes.length, codes, flights: cancelled.map((f) => `${f.number}-${f.date}`) });
   }
+  // One made-up passenger for a demo run (the console's "New demo passenger"), so a booking that
+  // was already rebooked or cancelled doesn't need a full reset before the next demo.
+  if (url.pathname === "/v1/admin/bookings" && req.method === "POST") {
+    const b = body as { code: string; first_name: string; last_name: string; phone: string; pax: number; flight: string; date: string; tier: string };
+    if (!/^[A-Z0-9]{6}$/.test(b.code ?? "")) return json({ error: "bad code" }, 400);
+    await db.prepare("INSERT OR REPLACE INTO bookings (code, first_name, last_name, phone, pax, flight, date, tier, assistance, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+      .bind(b.code, b.first_name, b.last_name, b.phone ?? "", b.pax ?? 1, b.flight, b.date, b.tier ?? "none", null, Date.now()).run();
+    return json(await db.prepare("SELECT * FROM bookings WHERE code = ?").bind(b.code).first());
+  }
   if (url.pathname === "/v1/admin/flights" && req.method === "POST") {
     const f: FlightDef = { ...RELIEF_FLIGHT, ...body.flight };
     const date = addDays(body.baseDate, f.day);

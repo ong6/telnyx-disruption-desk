@@ -11,6 +11,8 @@ export interface Flags {
   /** On a demo line a transfer would ring a real number mid-demo; end_call says the handoff line and hangs up. */
   handoff: "transfer" | "end_call";
   fault: "off" | "mcp_down";
+  /** The booking a web call acts as while web_calls_as_demo_caller is on (set by "New demo passenger"); empty means Jun's, found by the demo number. */
+  web_demo_booking: string;
 }
 export interface Scenario {
   id: string; // "normal" | "typhoon"
@@ -20,7 +22,7 @@ export interface Scenario {
   loadedAt: number;
 }
 
-const DEFAULTS: Flags = { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "off", handoff: "transfer", fault: "off" };
+const DEFAULTS: Flags = { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "off", handoff: "transfer", fault: "off", web_demo_booking: "" };
 const TTL_MS = 3_000;
 let cache: { at: number; flags: Flags; scenario: Scenario | null } | null = null;
 

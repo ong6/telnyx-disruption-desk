@@ -52,7 +52,8 @@ button.busy,a.busy{opacity:.55;pointer-events:none}
 <main>
 <section class="wide" style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between">
 <div><h2 style="margin:0 0 6px">Talk to the desk</h2><div class="mut">Call from this browser (allow the microphone). Phone: +1 743 888 2787 (trial account: only the verified number can dial in).
-<br>Web calls are treated as the demo passenger, Jun (booking K7Q2ZX), while <b>web calls as demo caller</b> is on; turn it off to verify with a booking from the README.</div></div>
+<br>While <b>web calls as demo caller</b> is on, a browser call is greeted as the demo passenger below, with no booking code to give. <b>New demo passenger</b> makes a fresh one, so you can rebook or cancel again.
+<div id="actingas" style="margin-top:6px;font:13px var(--mono)"></div><div class="controls op" style="margin-top:6px"><button onclick="act('/api/demo-passenger',{},this,'Creating a passenger…')" title="A random name and booking code on a Hong Kong flight; web calls act as them">New demo passenger</button></div></div></div>
 <telnyx-ai-agent agent-id="assistant-dbc59018-c2bb-437f-86bd-1030a9c5271b"></telnyx-ai-agent>
 </section>
 <div class="kpis" id="kpis"></div>
@@ -113,7 +114,7 @@ async function influx(el){
 }
 function flag(name,el){const cur=S&&S.flags?S.flags[name]:undefined;const next=name==='human_queue'?(cur==='full'?'open':'full'):name==='handoff'?(cur==='end_call'?'transfer':'end_call'):name==='fault'?(cur==='mcp_down'?'off':'mcp_down'):(cur==='on'?'off':'on');act('/api/flags',{[name]:next},el,'Flipping '+name+'…')}
 function sum(c,pred){return Object.entries(c).filter(([k])=>pred(k)).reduce((n,[,v])=>n+v,0)}
-function render(s){S=s;const f=s.flags;
+function render(s){S=s;const f=s.flags;{const t=(s.trips||[]).find(x=>x.code===(f.web_demo_booking||'K7Q2ZX'));$('actingas').innerHTML=f.web_calls_as_demo_caller==='on'?(t?'Web calls act as <b>'+esc(t.name)+'</b> · booking <b>'+esc(t.code)+'</b> · '+esc(t.flight||'')+' · '+esc(t.status==='none'?'ready to demo':t.status):'Web calls act as the demo passenger'):'<span class="mut">Web calls arrive unrecognised (they verify with a booking code)</span>'}
 const st=s.stateMs||0;$('state').textContent='console '+Math.round(st/100)/10+' s'+(s.degraded?' · degraded: '+s.degraded.join(', '):'');$('state').className='pill '+(s.degraded?'on':(st>4000?'warn':''));
 $('mode').textContent='disruption '+f.disruption_mode;$('mode').className='pill '+(f.disruption_mode==='on'?'on':'');
 $('queue').textContent='human queue '+f.human_queue;$('queue').className='pill '+(f.human_queue==='full'?'warn':'');

@@ -33,7 +33,7 @@ Bookings to try when calling from an unrecognised number (say the code, then the
 | `R2D5VK` | Raman | Platinum, two passengers, cancelled flight |
 | `H8N6CU` | Hughes | Tokyo flight, not affected: normal-day questions; a change costs 100 Singapore dollars, a cancel refunds 100 Singapore dollars (a sample amount) |
 
-The demo caller's own number is recognised by caller ID and greeted by name.
+The demo caller's own number is recognised by caller ID and greeted by name. On the console, **New demo passenger** creates a random name and booking code on a Hong Kong flight and makes browser calls act as that passenger, so a rebook or cancel can be demoed again without resetting the day; **Normal day** resets everything, including K7Q2ZX.
 
 The schedule runs seven days from today, the same every day: Singapore → Hong Kong NB860 07:10,
 NB862 09:15, NB864 11:45, NB866 14:30 and NB868 20:05; Singapore → Tokyo NB802 08:40, NB804
@@ -230,7 +230,7 @@ which points at chat sessions sharing MCP identity across parallel tests; it is 
 | Multi-assistant routing | `n_triage` → *Mandarin Desk*: its own persona and prompt, a Mandarin voice and speech-to-text, and its own tool set (no refunds or cancellations), with `voice_mode: distinct` |
 | Variable comparison edges | `special_assistance && human_queue == "open"`, `telnyx_last_tool_status_code == 200` (handoff gate), `telnyx_conversation_duration_secs >= 300` |
 | Alarms in actors | `Flight` (hold expiry, waitlist offers), `Trip` (outbound callback call), `Canary` (every minute) |
-| Object storage | Policy documents read by `get_policy` (uploaded with `scripts/upload-policies.mjs`); an itinerary receipt with the change fee written per rebooking (`receipts/<code>.json`) |
+| Object storage | Policy documents read by `get_policy` (uploaded with `scripts/upload-policies.mjs`); an itinerary receipt with the change fee written per rebooking (`receipts/<booking code>-<time>.json`) |
 | Feature flags (`Config` actor) | Disruption mode, human queue, hold length: flipped on the console, no redeploy |
 | Shared actors | `Flight`, `Trip`, `CallSession` and `Metrics` are owned by `desk-mcp`, bound by `desk-dv` and `desk-ops` |
 | Custom variables that route | `special_assistance` and `human_queue` (from the webhook) route; `incident_notice` and `opening_offer` make the opening; `caller_known` decides whether to verify |

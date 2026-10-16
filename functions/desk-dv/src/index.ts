@@ -74,15 +74,18 @@ export default {
       // Flags come from memory; on a cold process we don't wait for the Config actor past the budget and leave
       // the flag variables out, so the assistant's own defaults (kept in sync by desk-ops) apply.
       const cfg = await readConfigFast(env, 500);
-      const flags = cfg?.flags ?? { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "off" as const, handoff: "transfer", fault: "off" };
+      const flags = cfg?.flags ?? { disruption_mode: "off", human_queue: "open", hold_ttl_secs: 600, web_calls_as_demo_caller: "off" as const, handoff: "transfer", fault: "off", web_demo_booking: "" };
       const scenario = cfg?.scenario ?? null;
       let caller: string = p.telnyx_end_user_target ?? "";
       // A browser (widget) call has no phone number, only a SIP identity, even though its channel
       // reads phone_call: the caller id, not the channel, is what tells it apart.
-      if (!caller.startsWith("+") && flags.web_calls_as_demo_caller === "on") caller = process.env.DEMO_CALLER_NUMBER ?? "";
+      // While a demo passenger is set, a web call acts as that booking; otherwise as Jun's, by number.
+      const webAs = !caller.startsWith("+") && flags.web_calls_as_demo_caller === "on";
+      if (webAs) caller = process.env.DEMO_CALLER_NUMBER ?? "";
       // An unsigned request gets the anonymous path: the call still works, but no booking data leaves.
       const left = () => BUDGET_MS - (Date.now() - t0);
-      const booking: PssBooking | null = signed && caller ? await within(pss(env, trace, log).bookingByPhone(caller), left(), null) : null;
+      const lookup = webAs && flags.web_demo_booking ? pss(env, trace, log).booking(flags.web_demo_booking) : pss(env, trace, log).bookingByPhone(caller);
+      const booking: PssBooking | null = signed && caller ? await within(lookup, left(), null) : null;
       const tripStub = booking ? env.TRIP.idFromName(booking.code) : null;
       const [t, flight] = await Promise.all([
         tripStub ? within(tripStub.startCall(trace) as Promise<TripState | null>, left(), null) : null,
